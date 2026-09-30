@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-30
+
+Finishing with a chat, and living with a lot of them.
+
 ### Added
 
 - `/archive` saves a finished conversation as a file and closes its topic;
@@ -16,7 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/archive`). The HTML is self-contained, collapses long tool output, and marks
   text `dir="auto"` so right-to-left languages read correctly.
 - Archives keep tool output in full, unlike the mirror, which shortens it.
-
 - Each project gets a consistent topic colour and icon, so a long topic list can
   be scanned at a glance. `--restyle-topics` applies icons to topics that
   already exist.
@@ -27,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - While Claude is working the topic shows "typing…", replacing the
   "working…" message that used to be posted and then left behind.
+
+### Fixed
+
+- A project is now identified by its folder name rather than the first `cwd`
+  found in its records. `cwd` is wherever Claude happened to be working, not the
+  project root — one project showed twenty different values — so a chat that
+  began in a subfolder could be filed under it, giving the wrong topic name and
+  sending replies to the wrong directory.
+- Recorded paths are read the same way whatever machine the bridge runs on.
+  Windows paths came back whole on Linux, which would have put a full path into
+  every topic name and keyed standing permissions so they never matched twice.
 
 ## [0.1.0] - 2026-09-30
 
@@ -86,5 +100,6 @@ does rather than what changed.
 - Subagent output and Claude's thinking are not mirrored.
 - Tool input is truncated at 600 characters, output at 900.
 
-[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/releases/tag/v0.1.0
