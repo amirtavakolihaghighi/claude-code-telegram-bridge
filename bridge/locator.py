@@ -20,6 +20,10 @@ from pathlib import Path
 
 _CWD_CACHE: dict[Path, str | None] = {}
 
+# How far into each chat file to look for the project root. The first record of
+# a session carries it, so this only needs to be generous, not exhaustive.
+SCAN_LINES = 60
+
 
 def slugify(path: Path | str) -> str:
     """Path -> the folder name Claude Code uses for it."""
@@ -44,37 +48,51 @@ def leaf_name(path: Path | str) -> str:
 
 
 def _cwd_of(session_dir: Path) -> str | None:
-    """Read the project path a session folder belongs to, from its own records."""
+    r"""Work out which project folder a session directory belongs to.
+
+    Records carry a `cwd`, but it is wherever Claude happened to be working at
+    that moment, not the project root - a single project can show twenty of
+    them as Claude moves through subfolders.
+
+    The folder's own name is the reliable answer, because Claude Code derives it
+    from the project root with `slugify`. So we look for the recorded path whose
+    slug matches the folder name, which identifies the root exactly. Only if
+    none matches - after a project has been moved and its folder renamed, say -
+    do we fall back to the most recently recorded path.
+    """
     if session_dir in _CWD_CACHE:
         cached = _CWD_CACHE[session_dir]
         if cached is not None:
             return cached
 
-    found: str | None = None
+    wanted = session_dir.name.casefold()
+    fallback: str | None = None
+
     for jsonl in sorted(session_dir.glob("*.jsonl")):
         try:
             with jsonl.open("r", encoding="utf-8", errors="replace") as fh:
-                for _ in range(40):
+                for _ in range(SCAN_LINES):
                     line = fh.readline()
                     if not line:
                         break
-                    line = line.strip()
-                    if not line:
+                    if '"cwd"' not in line:
                         continue
                     try:
                         cwd = json.loads(line).get("cwd")
                     except json.JSONDecodeError:
                         continue
-                    if cwd:
-                        found = str(cwd)
-                        break
+                    if not cwd:
+                        continue
+                    if slugify(cwd).casefold() == wanted:
+                        _CWD_CACHE[session_dir] = str(cwd)
+                        return str(cwd)
+                    if fallback is None:
+                        fallback = str(cwd)
         except OSError:
             continue
-        if found:
-            break
 
-    _CWD_CACHE[session_dir] = found
-    return found
+    _CWD_CACHE[session_dir] = fallback
+    return fallback
 
 
 def known_projects(claude_home: Path) -> dict[str, Path]:

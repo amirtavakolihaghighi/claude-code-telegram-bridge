@@ -53,6 +53,32 @@ def test_a_project_is_matched_by_its_recorded_path_not_its_folder_name(
     assert [session.session_id for session in found] == ["aaaa"]
 
 
+def test_the_project_root_is_chosen_over_a_subfolder(chat_file, claude_home):
+    """`cwd` is wherever Claude was working, which is often a subfolder. The
+    folder's name is the slug of the root, so that is what identifies it."""
+    root = r"C:\Code\app"
+    deep = user_text("in a subfolder")
+    deep["cwd"] = r"C:\Code\app\src\thing"
+    start = user_text("at the root", uuid="u0")
+
+    # The subfolder record comes first, so a naive "take the first" rule fails.
+    chat_file(root, "aaaa", [deep, start])
+
+    found = find_session_files(claude_home, None)
+    assert found[0].project == Path(root)
+
+
+def test_a_moved_project_falls_back_to_a_recorded_path(chat_file, claude_home):
+    """After a move the folder is renamed but the records still hold the old
+    path, so nothing matches the slug. It must still resolve to something."""
+    path = chat_file(r"C:\Code\oldname", "aaaa", [user_text("hello")])
+    path.parent.rename(path.parent.parent / "c--Code-newname")
+
+    projects = known_projects(claude_home)
+
+    assert [str(p) for p in projects.values()] == [r"C:\Code\oldname"]
+
+
 def test_a_folder_with_no_readable_records_is_skipped(claude_home):
     empty = claude_home / "projects" / "c--Code-ghost"
     empty.mkdir(parents=True)
