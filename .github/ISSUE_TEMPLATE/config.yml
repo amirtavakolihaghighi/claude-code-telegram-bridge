@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/security/advisories/new
+    about: Report it privately instead of opening a public issue.

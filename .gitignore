@@ -1,0 +1,34 @@
+# Secrets - never commit
+.env
+
+# Local runtime data: read positions, topic mapping, logs, PID files
+state.db
+state.db-*
+state-dryrun.db*
+runtime/
+
+# Generated settings handed to the Claude CLI for a single run
+runtime/permission-hook.json
+
+# Exported Telegram themes, screenshots and other local scratch
+*.tdesktop-theme
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store

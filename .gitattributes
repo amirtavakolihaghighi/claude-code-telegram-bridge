@@ -1,0 +1,38 @@
+# Normalise line endings so a file committed from Windows still works elsewhere.
+# Without this, a shell script written here arrives on Linux with CRLF endings
+# and fails with "bad interpreter: No such file or directory", and binary files
+# can be silently corrupted by line-ending conversion.
+
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF - cmd.exe mis-parses LF-only batch files.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Everything else stays LF.
+*.py    text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+*.txt   text eol=lf
+*.sh    text eol=lf
+.env.example text eol=lf
+.gitignore   text eol=lf
+.gitattributes text eol=lf
+.editorconfig  text eol=lf
+
+# Never touch these.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zip   binary
+*.db    binary
+*.tdesktop-theme binary
+
+# Keep diffs of generated docs out of language statistics.
+*.md linguist-documentation
