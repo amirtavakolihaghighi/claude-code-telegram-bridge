@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Each project gets a consistent topic colour and icon, so a long topic list can
+  be scanned at a glance. --restyle-topics applies icons to topics that
+  already exist.
+- The bot registers its commands with Telegram, so typing / offers them with
+  descriptions.
+
+### Changed
+
+- While Claude is working the topic shows typing..., replacing the
+  working... message that used to be posted and left behind.
+
 ## [0.1.0] - 2026-09-30
 
 First public release. Everything below is new, so this lists what the release

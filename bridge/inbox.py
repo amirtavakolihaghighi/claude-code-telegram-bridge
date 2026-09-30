@@ -10,12 +10,14 @@ in the right folder.
 """
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram import (BotCommand, InlineKeyboardButton, InlineKeyboardMarkup,
+                      Update)
+from telegram.constants import ChatAction, ParseMode
 from telegram.error import TelegramError
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
@@ -46,6 +48,19 @@ ALLOW = "a"
 DENY = "d"
 ALLOW_ALL = "A"
 REMEMBER = "R"
+
+# Registered with Telegram so typing "/" offers them, with descriptions.
+COMMANDS = [
+    BotCommand("new", "Start a new chat in this project"),
+    BotCommand("c", "Send a message the long way round"),
+    BotCommand("stop", "Cut short whatever is running here"),
+    BotCommand("projects", "Which projects exist, and which are mirrored"),
+    BotCommand("rules", "Things Claude is always allowed to do"),
+    BotCommand("forget", "Undo a standing permission, or all of them"),
+    BotCommand("vscode", "Link that opens this chat in the editor"),
+    BotCommand("status", "Which chat, which project, busy or not"),
+    BotCommand("help", "List these commands"),
+]
 
 
 def _esc(text: str) -> str:
@@ -169,6 +184,23 @@ class Inbox:
         except TelegramError:
             pass
 
+    async def _keep_typing(self, chat_id, thread_id, stop: asyncio.Event) -> None:
+        """Telegram's typing indicator lasts about five seconds, so refresh it
+        until the turn finishes."""
+        if self.bot is None or chat_id is None:
+            return
+        while not stop.is_set():
+            try:
+                await self.bot.send_chat_action(chat_id=chat_id,
+                                                action=ChatAction.TYPING,
+                                                message_thread_id=thread_id)
+            except TelegramError:
+                return          # not worth retrying; the answer still arrives
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=4.0)
+            except asyncio.TimeoutError:
+                continue
+
     # -- the main path ---------------------------------------------------
     async def _send_prompt(self, update: Update, session_id: str | None,
                            prompt: str, project: Path | None) -> None:
@@ -195,9 +227,20 @@ class Inbox:
             )
 
         self.echo.remember(session_id or "pending", prompt)
-        await self._reply(update, f"{WORKING} <i>working...</i>")
 
-        result = await self.runner.run(session_id, prompt, project)
+        # "typing..." rather than a message saying so: one less line of clutter
+        # in every conversation, and it disappears on its own.
+        message = update.effective_message
+        stop_typing = asyncio.Event()
+        typing = asyncio.create_task(
+            self._keep_typing(message.chat_id if message else None,
+                              message.message_thread_id if message else None,
+                              stop_typing))
+        try:
+            result = await self.runner.run(session_id, prompt, project)
+        finally:
+            stop_typing.set()
+            await typing
 
         if session_id is None and result.session_id:
             self.echo.rename("pending", result.session_id)

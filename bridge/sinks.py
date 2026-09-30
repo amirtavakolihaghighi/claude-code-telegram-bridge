@@ -14,6 +14,7 @@ from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter, TelegramError
 
+from .appearance import colour_for, icon_for
 from .format import OutMessage
 from .state import State
 
@@ -73,6 +74,7 @@ class TelegramSink:
         self._idle = asyncio.Event()
         self._idle.set()
         self._worker: asyncio.Task | None = None
+        self._icons: list[str] | None = None
 
     # -- lifecycle -------------------------------------------------------
     async def start(self) -> None:
@@ -141,17 +143,59 @@ class TelegramSink:
         """Create the topic now, before there is anything to post in it."""
         return await self._ensure_thread(session_id)
 
+    async def _icon_ids(self) -> list[str]:
+        """Telegram's built-in topic icons, fetched once."""
+        if self._icons is None:
+            try:
+                stickers = await self.bot.get_forum_topic_icon_stickers()
+                self._icons = [s.custom_emoji_id for s in stickers
+                               if s.custom_emoji_id]
+            except TelegramError as exc:
+                log.warning("could not fetch topic icons: %s", exc)
+                self._icons = []
+        return self._icons
+
+    async def _look_for(self, session_id: str) -> tuple[int | None, str | None]:
+        project = self.state.project_for_session(session_id)
+        if not project:
+            return None, None
+        return colour_for(project), icon_for(project, await self._icon_ids())
+
+    async def restyle_topics(self) -> int:
+        """Give existing topics their project's icon. Colour cannot be changed
+        after creation, but the icon can, so older topics still get grouped."""
+        changed = 0
+        for session_id, thread_id, _, project in self.state.all_topics():
+            if thread_id is None or not project:
+                continue
+            icon = icon_for(project, await self._icon_ids())
+            if icon is None:
+                continue
+            try:
+                await self.bot.edit_forum_topic(chat_id=self.group_id,
+                                                message_thread_id=thread_id,
+                                                icon_custom_emoji_id=icon)
+                changed += 1
+            except RetryAfter as exc:
+                await asyncio.sleep(float(exc.retry_after) + 1)
+            except TelegramError as exc:
+                log.warning("could not restyle thread %s: %s", thread_id, exc)
+            await asyncio.sleep(1.0)
+        return changed
+
     async def _ensure_thread(self, session_id: str) -> int | None:
         thread_id, title = self.state.get_topic(session_id)
         if thread_id is not None:
             return thread_id
         name = topic_name(session_id, title)
+        colour, icon = await self._look_for(session_id)
 
         # Creating topics has its own, stricter flood limit than sending.
         for attempt in range(4):
             try:
-                topic = await self.bot.create_forum_topic(chat_id=self.group_id,
-                                                          name=name)
+                topic = await self.bot.create_forum_topic(
+                    chat_id=self.group_id, name=name,
+                    icon_color=colour, icon_custom_emoji_id=icon)
             except RetryAfter as exc:
                 wait = float(exc.retry_after) + 1
                 log.info("topic flood limit, waiting %.0fs", wait)

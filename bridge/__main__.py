@@ -20,7 +20,7 @@ from telegram.request import HTTPXRequest
 from .approval import ApprovalService
 from .config import load_config
 from .echo import EchoGuard
-from .inbox import build_application
+from .inbox import COMMANDS, build_application
 from .mirror import Mirror
 from .runner import Runner
 from .sinks import ConsoleSink, TelegramSink
@@ -41,6 +41,8 @@ def parse_args() -> argparse.Namespace:
                         help="mirror only; ignore messages typed in Telegram")
     parser.add_argument("--import-all", action="store_true",
                         help="give every existing chat a topic straight away")
+    parser.add_argument("--restyle-topics", action="store_true",
+                        help="give existing topics their project's icon, then exit")
     parser.add_argument("--log-file", metavar="PATH",
                         help="also write the log here (use when running hidden)")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -133,6 +135,10 @@ async def run_live(args) -> int:
                             "Set CLAUDE_CLI in .env")
 
         if replies:
+            try:
+                await app.bot.set_my_commands(COMMANDS)
+            except Exception as exc:          # never block startup over this
+                logging.warning("could not register the command menu: %s", exc)
             if approval is not None:
                 await approval.start()
             await app.start()
@@ -145,7 +151,9 @@ async def run_live(args) -> int:
 
         await sink.start()
         try:
-            if args.once:
+            if args.restyle_topics:
+                logging.info("restyled %d topic(s)", await sink.restyle_topics())
+            elif args.once:
                 logging.info("queued %d message(s)", await mirror.tick())
                 await sink.flush()
             else:
