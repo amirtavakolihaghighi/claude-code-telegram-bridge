@@ -229,10 +229,41 @@ class TelegramSink:
             log.warning("could not rename topic: %s", exc)
 
     # -- delivery --------------------------------------------------------
+    async def close_topic(self, session_id: str) -> bool:
+        thread_id, _ = self.state.get_topic(session_id)
+        if thread_id is None:
+            return False
+        try:
+            await self.bot.close_forum_topic(chat_id=self.group_id,
+                                             message_thread_id=thread_id)
+        except TelegramError as exc:
+            log.warning("could not close thread %s: %s", thread_id, exc)
+            return False
+        self.state.set_closed(session_id, True)
+        return True
+
+    async def reopen_topic(self, session_id: str) -> bool:
+        thread_id, _ = self.state.get_topic(session_id)
+        if thread_id is None:
+            return False
+        try:
+            await self.bot.reopen_forum_topic(chat_id=self.group_id,
+                                              message_thread_id=thread_id)
+        except TelegramError as exc:
+            log.warning("could not reopen thread %s: %s", thread_id, exc)
+            return False
+        self.state.set_closed(session_id, False)
+        return True
+
     async def _deliver(self, session_id: str, text: str, silent: bool) -> None:
         thread_id = await self._ensure_thread(session_id)
         if thread_id is None:
             return
+        # An archived chat that speaks again should not post into a closed
+        # topic, where the reply would be easy to miss.
+        if self.state.is_closed(session_id):
+            log.info("reopening archived topic for %s", session_id[:8])
+            await self.reopen_topic(session_id)
         # A long backfill can outlive a wobbly connection, so back off and keep
         # trying rather than dropping a message on the floor.
         backoff = [2, 5, 10, 20, 40, 60, 60, 60]

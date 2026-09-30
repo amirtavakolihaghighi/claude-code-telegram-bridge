@@ -34,6 +34,7 @@ class State:
             """
         )
         self._add_column("topics", "project", "TEXT")
+        self._add_column("topics", "closed", "INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
 
     def _add_column(self, table: str, column: str, kind: str) -> None:
@@ -91,6 +92,17 @@ class State:
             "SELECT project FROM topics WHERE session_id = ?", (session_id,)
         ).fetchone()
         return row[0] if row else None
+
+    def is_closed(self, session_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT closed FROM topics WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        return bool(row and row[0])
+
+    def set_closed(self, session_id: str, closed: bool) -> None:
+        self.conn.execute("UPDATE topics SET closed = ? WHERE session_id = ?",
+                          (1 if closed else 0, session_id))
+        self.conn.commit()
 
     def all_topics(self) -> list[tuple[str, int | None, str | None, str | None]]:
         return self.conn.execute(

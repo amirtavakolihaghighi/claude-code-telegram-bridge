@@ -15,8 +15,10 @@ import html
 import logging
 from pathlib import Path
 
+from io import BytesIO
+
 from telegram import (BotCommand, InlineKeyboardButton, InlineKeyboardMarkup,
-                      Update)
+                      InputFile, Update)
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import TelegramError
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
@@ -25,7 +27,9 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
 from .approval import ApprovalService, Pending
 from .config import Config
 from .echo import EchoGuard
-from .locator import known_projects, leaf_name, normalise
+from .export import chat_to_markdown, safe_filename
+from .locator import (find_session_files, known_projects, leaf_name,
+                      normalise)
 from .parser import describe_tool, tool_icon, tool_input
 from .runner import Runner
 from .state import State
@@ -41,6 +45,7 @@ ASK = "❓"
 ALLOWED = "✅"
 DENIED = "\U0001f6ab"
 STOPPED = "\U0001f6d1"
+BOX = "\U0001f4e6"
 BOLT = "⚡"
 REPEAT = "\U0001f501"
 
@@ -57,6 +62,8 @@ COMMANDS = [
     BotCommand("projects", "Which projects exist, and which are mirrored"),
     BotCommand("rules", "Things Claude is always allowed to do"),
     BotCommand("forget", "Undo a standing permission, or all of them"),
+    BotCommand("archive", "Save this chat as a file, then close the topic"),
+    BotCommand("reopen", "Reopen a closed topic so it can continue"),
     BotCommand("vscode", "Link that opens this chat in the editor"),
     BotCommand("status", "Which chat, which project, busy or not"),
     BotCommand("help", "List these commands"),
@@ -67,14 +74,23 @@ def _esc(text: str) -> str:
     return html.escape(text, quote=False)
 
 
+def chat_path(config: Config, session_id: str) -> Path | None:
+    for session in find_session_files(config.claude_home, config.watch_projects):
+        if session.session_id == session_id:
+            return session.path
+    return None
+
+
 class Inbox:
     def __init__(self, config: Config, state: State, runner: Runner,
-                 echo: EchoGuard, approval: ApprovalService | None):
+                 echo: EchoGuard, approval: ApprovalService | None,
+                 sink=None):
         self.config = config
         self.state = state
         self.runner = runner
         self.echo = echo
         self.approval = approval
+        self.sink = sink        # for closing and reopening topics
         self.bot = None         # filled in once the Application is built
 
     # -- plumbing --------------------------------------------------------
@@ -361,6 +377,66 @@ class Inbox:
         else:
             await self._reply(update, "No such rule. /rules shows the list.")
 
+    async def on_archive(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """/archive - post the whole chat as a Markdown file, then close it."""
+        if not self._is_owner(update):
+            return
+        session_id = self._session_for(update)
+        if session_id is None:
+            await self._reply(update, "This topic isn't linked to a chat.")
+            return
+        if self.sink is None:
+            await self._reply(update, "Not connected to Telegram properly.")
+            return
+        if self.runner.is_busy(session_id):
+            await self._reply(update, f"{WARN} Still working. Try again when "
+                                      f"it has finished, or send /stop.")
+            return
+
+        path = chat_path(self.config, session_id)
+        if path is None:
+            await self._reply(update, f"{WARN} The chat file is gone, so there "
+                                      f"is nothing left to export. Telegram is "
+                                      f"now the only copy.")
+            return
+
+        _, title = self.state.get_topic(session_id)
+        project = self.state.project_for_session(session_id)
+        try:
+            text = chat_to_markdown(path, title, project)
+        except RuntimeError as exc:
+            await self._reply(update, f"{CROSS} {_esc(str(exc))}")
+            return
+
+        message = update.effective_message
+        document = BytesIO(text.encode("utf-8"))
+        document.name = safe_filename(title or "", session_id)
+        await self.bot.send_document(
+            chat_id=self.config.group_id,
+            message_thread_id=message.message_thread_id if message else None,
+            document=InputFile(document, filename=document.name),
+            caption=f"{BOX} <b>Archived</b> · {len(text) // 1024} KB\n"
+                    f"<i>The topic is now closed. Anything new in this chat "
+                    f"reopens it, or use /reopen.</i>",
+            parse_mode=ParseMode.HTML,
+        )
+
+        if await self.sink.close_topic(session_id):
+            log.info("archived and closed %s", session_id[:8])
+
+    async def on_reopen(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """/reopen - bring a closed topic back so it can be used again."""
+        if not self._is_owner(update):
+            return
+        session_id = self._session_for(update)
+        if session_id is None or self.sink is None:
+            await self._reply(update, "This topic isn't linked to a chat.")
+            return
+        if await self.sink.reopen_topic(session_id):
+            await self._reply(update, "Open again. Carry on.")
+        else:
+            await self._reply(update, "It was already open.")
+
     async def on_vscode(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """/vscode - a link that opens this chat in the editor."""
         if not self._is_owner(update):
@@ -405,6 +481,8 @@ class Inbox:
             "/new &lt;text&gt; - start a new chat in this project\n"
             "/c &lt;text&gt; - send a message the long way\n"
             "/stop - cut short whatever is running here\n"
+            "/archive - save this chat as a file, then close the topic\n"
+            "/reopen - reopen a closed topic\n"
             "/projects - which projects are mirrored\n"
             "/rules - things Claude may always do\n"
             "/forget &lt;key|all&gt; - undo one of those\n"
@@ -423,6 +501,8 @@ def build_application(config: Config, state: State, runner: Runner,
            .request(request)
            .build())
     inbox.bot = app.bot
+    # The sink needs app.bot, so it is built after this and attached here.
+    app.bot_data["inbox"] = inbox
     if approval is not None:
         approval.set_notifier(inbox.send_approval)
 
@@ -432,6 +512,8 @@ def build_application(config: Config, state: State, runner: Runner,
     app.add_handler(CommandHandler("projects", inbox.on_projects))
     app.add_handler(CommandHandler("rules", inbox.on_rules))
     app.add_handler(CommandHandler("forget", inbox.on_forget))
+    app.add_handler(CommandHandler("archive", inbox.on_archive))
+    app.add_handler(CommandHandler("reopen", inbox.on_reopen))
     app.add_handler(CommandHandler("vscode", inbox.on_vscode))
     app.add_handler(CommandHandler("status", inbox.on_status))
     app.add_handler(CommandHandler("help", inbox.on_help))
