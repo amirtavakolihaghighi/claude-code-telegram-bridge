@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bridge.locator import (find_session_files, known_projects, normalise,
-                            slugify)
+from bridge.locator import (find_session_files, known_projects, leaf_name,
+                            normalise, slugify)
 from tests.conftest import assistant_text, user_text
 
 
@@ -68,7 +68,16 @@ def test_known_projects_lists_each_project_once(chat_file, claude_home):
 
     projects = known_projects(claude_home)
 
-    assert sorted(p.name for p in projects.values()) == ["alpha", "beta"]
+    assert sorted(leaf_name(p) for p in projects.values()) == ["alpha", "beta"]
+
+
+def test_the_last_part_of_a_path_is_found_whatever_the_separator():
+    """Recorded paths come from whichever machine Claude Code ran on, so a
+    Windows path must still shorten correctly on a Linux host."""
+    assert leaf_name(r"C:\Code\webshop") == "webshop"
+    assert leaf_name("/home/me/code/webshop") == "webshop"
+    assert leaf_name(r"C:\Code\webshop\\") == "webshop"
+    assert leaf_name("webshop") == "webshop"
 
 
 def test_a_missing_claude_home_is_not_an_error(tmp_path):

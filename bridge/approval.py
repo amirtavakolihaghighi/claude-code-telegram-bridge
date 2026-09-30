@@ -16,6 +16,7 @@ import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .locator import leaf_name
 from .state import State
 
 log = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ def rule_key(tool_name: str, tool_input: dict) -> tuple[str, str]:
         command = str(tool_input.get("command", "")).strip()
         words = command.split()
         if words:
-            program = Path(words[0]).name or words[0]
+            program = leaf_name(words[0]) or words[0]
             # npm, npm.cmd and npm.exe are the same thing to a human.
             if program.lower().endswith((".exe", ".cmd", ".bat", ".ps1", ".com")):
                 program = program.rsplit(".", 1)[0]

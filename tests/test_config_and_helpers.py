@@ -11,6 +11,7 @@ import pytest
 from bridge import config as config_module
 from bridge.config import load_config
 from bridge.echo import EchoGuard
+from bridge.locator import leaf_name
 from bridge.vscode import handoff_url, is_project_open, open_workspaces, pid_alive
 
 TELEGRAM_KEYS = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_GROUP_ID", "TELEGRAM_OWNER_ID",
@@ -50,7 +51,7 @@ def test_several_projects_are_separated_by_semicolons(clean_env):
     clean_env.setenv("TELEGRAM_BOT_TOKEN", "x")
     clean_env.setenv("WATCH_PROJECTS", r"C:\Code\a ; C:\Code\b")
     settings = load_config()
-    assert [p.name for p in settings.watch_projects] == ["a", "b"]
+    assert [leaf_name(p) for p in settings.watch_projects] == ["a", "b"]
     assert settings.default_project == Path(r"C:\Code\a")
 
 

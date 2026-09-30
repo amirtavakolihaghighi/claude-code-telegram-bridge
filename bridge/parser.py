@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from .events import Event
+from .locator import leaf_name
 
 SKIP_PREFIXES = ("<system-reminder>", "<local-command", "<command-name>")
 LABEL_LIMIT = 90
@@ -67,7 +68,7 @@ def _trim_block(text: str, limit: int) -> str:
 
 def _filename(value: object) -> str:
     try:
-        return Path(str(value)).name or str(value)
+        return leaf_name(value) or str(value)
     except (TypeError, ValueError):
         return str(value)
 

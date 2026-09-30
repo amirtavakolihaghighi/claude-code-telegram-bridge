@@ -23,7 +23,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
 from .approval import ApprovalService, Pending
 from .config import Config
 from .echo import EchoGuard
-from .locator import known_projects, normalise
+from .locator import known_projects, leaf_name, normalise
 from .parser import describe_tool, tool_icon, tool_input
 from .runner import Runner
 from .state import State
@@ -189,7 +189,7 @@ class Inbox:
         if is_project_open(self.config.claude_home, project):
             await self._reply(
                 update,
-                f"{WARN} <b>{_esc(project.name)}</b> is open in VS Code. If this "
+                f"{WARN} <b>{_esc(leaf_name(project))}</b> is open in VS Code. If this "
                 f"chat is open there too, close its tab first - otherwise the two "
                 f"can write over each other."
             )
@@ -252,7 +252,7 @@ class Inbox:
                                       "/projects shows what I can see.")
             return
         await self._reply(update, f"{SPARK} Starting a new chat in "
-                                  f"<b>{_esc(project.name)}</b> - it will appear "
+                                  f"<b>{_esc(leaf_name(project))}</b> - it will appear "
                                   f"as its own topic.")
         await self._send_prompt(update, None, prompt, project)
 
@@ -277,10 +277,10 @@ class Inbox:
             return
         watched = {normalise(p) for p in self.config.watch_projects}
         lines = ["<b>Projects on this PC</b>"]
-        for key, path in sorted(projects.items(), key=lambda kv: kv[1].name.lower()):
+        for key, path in sorted(projects.items(), key=lambda kv: leaf_name(kv[1]).lower()):
             mark = "✅" if (self.config.watches_everything or key in watched) \
                 else "—"
-            lines.append(f"{mark} {_esc(path.name)}  <code>{_esc(str(path))}</code>")
+            lines.append(f"{mark} {_esc(leaf_name(path))}  <code>{_esc(str(path))}</code>")
         lines.append("")
         lines.append("✅ = mirrored. Change WATCH_PROJECTS in .env to adjust.")
         await self._reply(update, "\n".join(lines))

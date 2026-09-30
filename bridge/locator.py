@@ -30,6 +30,19 @@ def normalise(path: Path | str) -> str:
     return str(path).replace("/", "\\").rstrip("\\").casefold()
 
 
+def leaf_name(path: Path | str) -> str:
+    r"""The last part of a path, whichever separator it uses.
+
+    Paths reach us as strings recorded by whichever machine Claude Code ran on,
+    so they may be Windows-style even when this is not a Windows machine.
+    `Path(r"C:\Code\app").name` is the whole string on Linux, which would put a
+    full path into every topic name. Splitting on both separators is correct
+    everywhere.
+    """
+    text = str(path).replace("\\", "/").rstrip("/")
+    return text.rsplit("/", 1)[-1] or text
+
+
 def _cwd_of(session_dir: Path) -> str | None:
     """Read the project path a session folder belongs to, from its own records."""
     if session_dir in _CWD_CACHE:

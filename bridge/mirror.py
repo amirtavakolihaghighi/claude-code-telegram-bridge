@@ -8,7 +8,7 @@ from pathlib import Path
 from .config import Config
 from .echo import EchoGuard
 from .format import render
-from .locator import find_session_files
+from .locator import find_session_files, leaf_name
 from .parser import SessionReader, read_title
 from .state import State
 
@@ -42,7 +42,7 @@ class Mirror:
         group is fed by more than one computer.
         """
         project = self.projects.get(session_id)
-        name = project.name if project is not None else "unknown"
+        name = leaf_name(project) if project is not None else "unknown"
         prefix = f"{self.config.machine_label} · " if self.config.machine_label else ""
         return f"{prefix}{name}: {title}"
 
@@ -65,13 +65,13 @@ class Mirror:
             # Chat existed before we started: begin from now, don't dump history.
             reader.seek_to_end()
             log.info("tracking %s [%s] from now (%d bytes skipped)",
-                     session_id[:8], project.name, reader.offset)
+                     session_id[:8], leaf_name(project), reader.offset)
         elif unseen:
             log.info("new chat %s [%s] - mirroring from the start",
-                     session_id[:8], project.name)
+                     session_id[:8], leaf_name(project))
         else:
             log.info("tracking %s [%s] from byte %d",
-                     session_id[:8], project.name, reader.offset)
+                     session_id[:8], leaf_name(project), reader.offset)
 
         self.state.set_offset(session_id, path, reader.offset)
         self.state.set_topic(session_id, None, None, str(project))
