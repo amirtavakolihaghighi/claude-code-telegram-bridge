@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `/archive` saves a finished conversation as a file and closes its topic;
+  `/reopen` brings it back, and anything new in that chat reopens it by itself.
+  Closing hides a topic from the active list without deleting anything.
+- Archives come as Markdown, HTML or both (`ARCHIVE_FORMAT`, or an argument to
+  `/archive`). The HTML is self-contained, collapses long tool output, and marks
+  text `dir="auto"` so right-to-left languages read correctly.
+- Archives keep tool output in full, unlike the mirror, which shortens it.
+
 - Each project gets a consistent topic colour and icon, so a long topic list can
   be scanned at a glance. `--restyle-topics` applies icons to topics that
   already exist.

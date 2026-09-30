@@ -27,7 +27,8 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
 from .approval import ApprovalService, Pending
 from .config import Config
 from .echo import EchoGuard
-from .export import chat_to_markdown, safe_filename
+from .export import (read_transcript, render_html, render_markdown,
+                     safe_filename)
 from .locator import (find_session_files, known_projects, leaf_name,
                       normalise)
 from .parser import describe_tool, tool_icon, tool_input
@@ -377,9 +378,17 @@ class Inbox:
         else:
             await self._reply(update, "No such rule. /rules shows the list.")
 
-    async def on_archive(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-        """/archive - post the whole chat as a Markdown file, then close it."""
+    async def on_archive(self, update: Update,
+                         context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/archive [md|html|both] - post the chat as files, then close it."""
         if not self._is_owner(update):
+            return
+        wanted = (context.args[0].lower() if context.args
+                  else self.config.archive_format)
+        if wanted not in ("md", "html", "both"):
+            await self._reply(update, "Say <code>/archive md</code>, "
+                                      "<code>/archive html</code> or "
+                                      "<code>/archive both</code>.")
             return
         session_id = self._session_for(update)
         if session_id is None:
@@ -403,23 +412,36 @@ class Inbox:
         _, title = self.state.get_topic(session_id)
         project = self.state.project_for_session(session_id)
         try:
-            text = chat_to_markdown(path, title, project)
+            script = read_transcript(path, title, project)
         except RuntimeError as exc:
             await self._reply(update, f"{CROSS} {_esc(str(exc))}")
             return
 
+        builders = {"md": (render_markdown, ".md"),
+                    "html": (render_html, ".html")}
+        chosen = ["md", "html"] if wanted == "both" else [wanted]
+
         message = update.effective_message
-        document = BytesIO(text.encode("utf-8"))
-        document.name = safe_filename(title or "", session_id)
-        await self.bot.send_document(
-            chat_id=self.config.group_id,
-            message_thread_id=message.message_thread_id if message else None,
-            document=InputFile(document, filename=document.name),
-            caption=f"{BOX} <b>Archived</b> · {len(text) // 1024} KB\n"
-                    f"<i>The topic is now closed. Anything new in this chat "
-                    f"reopens it, or use /reopen.</i>",
-            parse_mode=ParseMode.HTML,
-        )
+        thread_id = message.message_thread_id if message else None
+        sizes = []
+        for index, key in enumerate(chosen):
+            render, suffix = builders[key]
+            text = render(script)
+            sizes.append(f"{suffix.lstrip('.')} {len(text.encode()) // 1024} KB")
+            document = BytesIO(text.encode("utf-8"))
+            document.name = safe_filename(title or "", session_id, suffix)
+            last = index == len(chosen) - 1
+            await self.bot.send_document(
+                chat_id=self.config.group_id,
+                message_thread_id=thread_id,
+                document=InputFile(document, filename=document.name),
+                caption=(f"{BOX} <b>Archived</b> · {', '.join(sizes)}\n"
+                         f"<i>The topic is now closed. Anything new in this "
+                         f"chat reopens it, or use /reopen.</i>")
+                        if last else None,
+                parse_mode=ParseMode.HTML if last else None,
+            )
+            await asyncio.sleep(1)
 
         if await self.sink.close_topic(session_id):
             log.info("archived and closed %s", session_id[:8])

@@ -1,7 +1,7 @@
 """Turning a chat into a Markdown transcript."""
 from __future__ import annotations
 
-from bridge.export import chat_to_markdown, safe_filename
+from bridge.export import chat_to_html, chat_to_markdown, safe_filename
 from tests.conftest import (assistant_text, cost_state, title, tool_result,
                             tool_use, user_text)
 
@@ -100,3 +100,56 @@ def test_the_filename_is_safe_for_every_system():
 
 def test_a_chat_with_no_title_still_gets_a_filename():
     assert safe_filename("", "abcdef1234").endswith(".md")
+
+
+def test_the_suffix_can_be_chosen():
+    assert safe_filename("Fix things", "abcdef1234", ".html").endswith(".html")
+
+
+# -- HTML --------------------------------------------------------------------
+def test_the_html_is_a_complete_standalone_page(chat_file):
+    path = chat_file(r"C:\Code\app", "s1", [user_text("hello")])
+    page = chat_to_html(path, "A chat")
+    assert page.startswith("<!doctype html>")
+    assert "<style>" in page                 # no external files to fetch
+    assert 'charset="utf-8"' in page
+    assert page.rstrip().endswith("</html>")
+
+
+def test_right_to_left_text_is_marked_so_it_reads_correctly(chat_file):
+    """Markdown has no way to express direction; this is why HTML exists here."""
+    persian = "سلام، لطفا این باگ را درست کن"
+    path = chat_file(r"C:\Code\app", "s1", [user_text(persian)])
+    page = chat_to_html(path)
+    assert persian in page
+    assert 'dir="auto"' in page
+
+
+def test_html_special_characters_in_a_chat_cannot_break_the_page(chat_file):
+    path = chat_file(r"C:\Code\app", "s1",
+                     [user_text("<script>alert('x')</script> & <b>bold</b>")])
+    page = chat_to_html(path)
+    assert "<script>alert" not in page
+    assert "&lt;script&gt;" in page
+
+
+def test_tool_calls_are_collapsed_so_long_output_does_not_dominate(chat_file):
+    path = chat_file(r"C:\Code\app", "s1", [
+        tool_use("Bash", {"command": "seq 3"}),
+        tool_result("1\n2\n3"),
+    ])
+    page = chat_to_html(path)
+    assert "<details" in page and "<summary>" in page
+
+
+def test_both_formats_describe_the_same_conversation(chat_file):
+    path = chat_file(r"C:\Code\app", "s1", [
+        title("Shared title"),
+        user_text("a question"),
+        assistant_text("an answer"),
+    ])
+    markdown = chat_to_markdown(path)
+    page = chat_to_html(path)
+    for needle in ("Shared title", "a question", "an answer"):
+        assert needle in markdown
+        assert needle in page

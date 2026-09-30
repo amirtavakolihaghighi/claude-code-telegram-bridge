@@ -27,6 +27,7 @@ class Config:
     replies_enabled: bool
     approval_timeout: float
     machine_label: str
+    archive_format: str
 
     @property
     def watches_everything(self) -> bool:
@@ -128,6 +129,10 @@ def load_config(require_token: bool = True) -> Config:
     except ValueError:
         approval_timeout = 300.0
 
+    archive_format = (os.getenv("ARCHIVE_FORMAT", "").strip().lower() or "both")
+    if archive_format not in ("md", "html", "both"):
+        raise SystemExit("ARCHIVE_FORMAT must be md, html or both")
+
     return Config(
         bot_token=token,
         group_id=_optional_int("TELEGRAM_GROUP_ID"),
@@ -141,4 +146,5 @@ def load_config(require_token: bool = True) -> Config:
         replies_enabled=_flag("REPLIES_ENABLED", True),
         approval_timeout=approval_timeout,
         machine_label=os.getenv("MACHINE_LABEL", "").strip(),
+        archive_format=archive_format,
     )

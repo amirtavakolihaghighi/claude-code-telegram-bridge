@@ -163,6 +163,8 @@ Type in a topic to continue that chat.
 | `/new <text>` | Start a new chat in this topic's project |
 | `/c <text>` | Send a message the long way round |
 | `/stop` | Cut short whatever is running here |
+| `/archive [md\|html\|both]` | Save the chat as files, then close the topic |
+| `/reopen` | Reopen a closed topic so it can continue |
 | `/projects` | Which projects exist, and which are mirrored |
 | `/rules` | Things Claude is always allowed to do |
 | `/forget <key\|all>` | Undo one of those |
@@ -194,6 +196,29 @@ command, but not `npm` or `rm`. `/rules` lists what you have agreed to;
 
 If you don't answer within five minutes it refuses on your behalf, so nothing
 hangs waiting.
+
+### Finishing with a chat
+
+When a project is done, `/archive` posts the whole conversation as files and
+closes the topic.
+
+**Closing deletes nothing.** Every message stays, stays searchable and stays
+readable — the topic moves to a Closed section and stops accepting new
+messages. `/reopen` brings it back, and anything new arriving in that chat
+reopens it by itself.
+
+Two formats, because they are good at different things:
+
+| Format | Good for |
+| --- | --- |
+| Markdown | Handing the conversation back to an AI, diffing, grepping |
+| HTML | Reading. Keeps formatting, collapses long tool output, and marks text `dir="auto"` so right-to-left languages read correctly — something Markdown cannot express. |
+
+`ARCHIVE_FORMAT` in `.env` sets the default; `/archive html` overrides it once.
+
+The HTML is a single self-contained file with no external assets, so it opens
+from your downloads folder with no internet. **Telegram will not render it
+in-app** — tapping it hands the file to your browser.
 
 ### The one rule
 
