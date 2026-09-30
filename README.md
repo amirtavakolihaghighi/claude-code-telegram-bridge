@@ -54,6 +54,11 @@ came out in a block you tap to expand:
 
 Only Claude's replies notify you. Tool activity is silent.
 
+Telegram has no headings, tables or lists, so Markdown that assumes them is
+translated into what it can show — headings become bold, two-column tables
+become labelled lists, wider ones keep their shape in a monospace block. You
+never see a literal `## Heading` or a row of pipes.
+
 ---
 
 ## Install

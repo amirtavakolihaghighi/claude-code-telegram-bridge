@@ -13,9 +13,26 @@ from .events import Event
 from .parser import tool_icon
 
 CHUNK_LIMIT = 3500
-_INLINE_CODE = re.compile(r"`([^`\n]+)`")
-_BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
 _LANG_TAG = re.compile(r"^[A-Za-z0-9_+.-]{0,15}\n")
+
+# Telegram accepts a short list of tags and nothing else: no headings, no
+# tables, no lists. Markdown that assumes otherwise has to be translated into
+# what it can show, or it arrives as literal "## Heading" and rows of pipes.
+_INLINE_CODE = re.compile(r"`([^`\n]+)`")
+_LINK = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
+_BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
+_ITALIC = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
+_STRIKE = re.compile(r"~~([^~\n]+)~~")
+_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
+_BULLET = re.compile(r"^(\s*)[-*+]\s+(.*)$")
+_QUOTE = re.compile(r"^\s*>\s?(.*)$")
+_RULE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+_TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
+_TABLE_DIVIDER = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
+
+RULE_LINE = "─" * 12
+BULLET = "•"
+STASH = "\x00"
 
 USER_ICON = "\U0001f464"
 CLAUDE_ICON = "\U0001f916"
@@ -35,8 +52,124 @@ def _escape(text: str) -> str:
 
 
 def _inline(text: str) -> str:
-    text = _INLINE_CODE.sub(r"<code>\1</code>", text)
-    return _BOLD.sub(r"<b>\1</b>", text)
+    """Inline markdown -> Telegram HTML. `text` must already be escaped.
+
+    Code spans are lifted out first so that bold and italic markers inside them
+    are left alone - `a * b` is multiplication, not emphasis.
+    """
+    spans: list[str] = []
+
+    def stash(match: re.Match) -> str:
+        spans.append(match.group(1))
+        return f"{STASH}{len(spans) - 1}{STASH}"
+
+    text = _INLINE_CODE.sub(stash, text)
+    text = _LINK.sub(
+        lambda m: f'<a href="{html.escape(m.group(2), quote=True)}">'
+                  f"{m.group(1)}</a>", text)
+    text = _BOLD.sub(r"<b>\1</b>", text)
+    text = _ITALIC.sub(r"<i>\1</i>", text)
+    text = _STRIKE.sub(r"<s>\1</s>", text)
+    return re.sub(rf"{STASH}(\d+){STASH}",
+                  lambda m: f"<code>{spans[int(m.group(1))]}</code>", text)
+
+
+def _formatted(text: str) -> str:
+    return _inline(_escape(text))
+
+
+def _plain(text: str) -> str:
+    """Strip inline markers, for places that cannot carry formatting."""
+    text = _INLINE_CODE.sub(r"\1", text)
+    text = _LINK.sub(r"\1", text)
+    text = _BOLD.sub(r"\1", text)
+    text = _ITALIC.sub(r"\1", text)
+    return _STRIKE.sub(r"\1", text)
+
+
+def _cells(row: str) -> list[str]:
+    return [cell.strip() for cell in row.strip().strip("|").split("|")]
+
+
+def _render_table(rows: list[list[str]]) -> str:
+    """Telegram has no tables. Two columns read best as a labelled list; wider
+    ones keep their shape in a monospace block, which scrolls sideways."""
+    width = max(len(row) for row in rows)
+    header, body = rows[0], rows[1:]
+
+    if width <= 2:
+        lines = []
+        if any(cell for cell in header):
+            lines.append("<b>" + " · ".join(_formatted(c) for c in header
+                                                 if c) + "</b>")
+        for row in body:
+            left = _formatted(row[0]) if row else ""
+            right = _formatted(row[1]) if len(row) > 1 else ""
+            if left and right:
+                lines.append(f"{BULLET} <b>{left}</b> — {right}")
+            elif left or right:
+                lines.append(f"{BULLET} {left or right}")
+        return "\n".join(lines)
+
+    widths = [max(len(_plain(row[i])) if i < len(row) else 0 for row in rows)
+              for i in range(width)]
+    lines = []
+    for row in rows:
+        padded = [_plain(row[i] if i < len(row) else "").ljust(widths[i])
+                  for i in range(width)]
+        lines.append("  ".join(padded).rstrip())
+    return f"<pre>{_escape(chr(10).join(lines))}</pre>"
+
+
+def _prose(text: str) -> str:
+    """A block of markdown that is not inside a code fence."""
+    lines = text.split("\n")
+    out: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+
+        if (_TABLE_ROW.match(line) and index + 1 < len(lines)
+                and _TABLE_DIVIDER.match(lines[index + 1])):
+            rows = [_cells(line)]
+            index += 2                                  # skip the divider
+            while index < len(lines) and _TABLE_ROW.match(lines[index]):
+                rows.append(_cells(lines[index]))
+                index += 1
+            out.append(_render_table(rows))
+            continue
+
+        quote = _QUOTE.match(line)
+        if quote:
+            quoted = [quote.group(1)]
+            index += 1
+            while index < len(lines) and (m := _QUOTE.match(lines[index])):
+                quoted.append(m.group(1))
+                index += 1
+            body = "\n".join(_formatted(q) for q in quoted)
+            out.append(f"<blockquote>{body}</blockquote>")
+            continue
+
+        index += 1
+
+        if _RULE.match(line):
+            out.append(RULE_LINE)
+            continue
+
+        heading = _HEADING.match(line)
+        if heading:
+            out.append(f"<b>{_formatted(heading.group(2))}</b>")
+            continue
+
+        bullet = _BULLET.match(line)
+        if bullet:
+            out.append(f"{bullet.group(1)}{BULLET} {_formatted(bullet.group(2))}")
+            continue
+
+        out.append(_formatted(line))
+
+    return "\n".join(out)
 
 
 def _chunk(text: str, limit: int) -> list[str]:
@@ -70,7 +203,7 @@ def _convert(chunk: str, in_code: bool) -> tuple[str, bool]:
             body = _LANG_TAG.sub("", part).strip("\n")
             rendered.append(f"<pre>{_escape(body)}</pre>" if body else "")
         else:
-            rendered.append(_inline(_escape(part)))
+            rendered.append(_prose(part))
         if index < len(parts) - 1:
             in_code = not in_code
     return "".join(rendered), in_code

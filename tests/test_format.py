@@ -83,3 +83,94 @@ def test_an_empty_message_renders_nothing():
 
 def test_a_title_event_produces_no_message():
     assert render(Event("title", "s1", text="Some chat")) == []
+
+
+# -- markdown Telegram cannot show natively ----------------------------------
+def test_a_heading_becomes_bold_not_literal_hashes():
+    assert render_body("## Final state")[0] == "<b>Final state</b>"
+    assert render_body("# One")[0] == "<b>One</b>"
+    assert render_body("###### Six")[0] == "<b>Six</b>"
+
+
+def test_a_hash_that_is_not_a_heading_is_left_alone():
+    assert "#" in render_body("issue #42 is fixed")[0]
+
+
+def test_a_two_column_table_becomes_a_labelled_list():
+    rendered = render_body(
+        "| | |\n|---|---|\n| Working tree | clean |\n| CI | green |")[0]
+    assert "|" not in rendered
+    assert "• <b>Working tree</b> — clean" in rendered
+    assert "• <b>CI</b> — green" in rendered
+
+
+def test_a_two_column_table_keeps_a_real_header():
+    rendered = render_body(
+        "| Check | Result |\n|---|---|\n| CI | green |")[0]
+    assert "<b>Check · Result</b>" in rendered
+
+
+def test_a_wider_table_keeps_its_shape_in_a_monospace_block():
+    rendered = render_body(
+        "| Format | Good for | Size |\n|---|---|---|\n"
+        "| Markdown | feeding an AI | 158 KB |\n| HTML | reading | 165 KB |")[0]
+    assert rendered.startswith("<pre>")
+    assert "|" not in rendered
+    assert "Markdown  feeding an AI  158 KB" in rendered
+
+
+def test_a_line_of_pipes_that_is_not_a_table_is_left_alone():
+    """Without a divider row it is not a table, so it must not be mangled."""
+    assert "|" in render_body("a | b | c")[0]
+
+
+def test_bullets_become_real_bullets_and_keep_their_indentation():
+    rendered = render_body("- top\n  - nested\n* star")[0]
+    assert "• top" in rendered
+    assert "  • nested" in rendered
+    assert "• star" in rendered
+
+
+def test_numbered_lists_are_left_as_they_are():
+    assert "1. first" in render_body("1. first\n2. second")[0]
+
+
+def test_a_quote_becomes_a_quote_block():
+    rendered = render_body("> one\n> two")[0]
+    assert rendered == "<blockquote>one\ntwo</blockquote>"
+
+
+def test_a_horizontal_rule_becomes_a_line():
+    assert "─" in render_body("---")[0]
+
+
+def test_a_link_is_clickable():
+    rendered = render_body("see the [changelog](https://example.com/a.md)")[0]
+    assert '<a href="https://example.com/a.md">changelog</a>' in rendered
+
+
+def test_italic_and_strikethrough():
+    assert "<i>and</i>" in render_body("the commit *and* the tag")[0]
+    assert "<s>ignore</s>" in render_body("~~ignore~~ this")[0]
+
+
+def test_stars_inside_code_are_not_treated_as_formatting():
+    rendered = render_body("use `a * b ** c` here")[0]
+    assert "<code>a * b ** c</code>" in rendered
+    assert "<i>" not in rendered and "<b>" not in rendered
+
+
+def test_stars_inside_a_fenced_block_are_left_alone():
+    rendered = render_body("```\nprint('a * b ** c')\n```")[0]
+    assert "a * b ** c" in rendered
+    assert "<i>" not in rendered
+
+
+def test_a_url_with_a_quote_cannot_break_out_of_the_tag():
+    rendered = render_body('[x](https://e.com/a"onmouseover=1)')[0]
+    assert '"onmouseover' not in rendered.split("</a>")[0].replace("&quot;", "")
+
+
+def test_markdown_inside_a_table_cell_still_formats():
+    rendered = render_body("| a | b |\n|---|---|\n| **bold** | `code` |")[0]
+    assert "<b>" in rendered and "<code>code</code>" in rendered

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Markdown that Telegram cannot show natively is now translated rather than
+  arriving as literal syntax. Headings become bold, two-column tables become
+  labelled lists, wider tables keep their shape in a monospace block, bullets
+  become real bullets, and rules become a line. Links, italics and
+  strikethrough render properly; markers inside code spans and fenced blocks
+  are left alone.
+
 ## [0.2.0] - 2026-09-30
 
 Finishing with a chat, and living with a lot of them.
