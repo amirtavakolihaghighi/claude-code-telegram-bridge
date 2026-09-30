@@ -170,6 +170,11 @@ Type in a topic to continue that chat.
 | `/stop` | Cut short whatever is running here |
 | `/archive [md\|html\|both]` | Save the chat as files, then close the topic |
 | `/reopen` | Reopen a closed topic so it can continue |
+| `/usage [all]` | What your sessions have cost, by project and day |
+| `/quota` | How much of your 5-hour and 7-day limits is used |
+| `/accounts` | Claude accounts and their remaining quota |
+| `/switch <n>` | Change which account Claude uses |
+| `/file <path>` | Send me a file from this project |
 | `/projects` | Which projects exist, and which are mirrored |
 | `/rules` | Things Claude is always allowed to do |
 | `/forget <key\|all>` | Undo one of those |
@@ -201,6 +206,30 @@ command, but not `npm` or `rm`. `/rules` lists what you have agreed to;
 
 If you don't answer within five minutes it refuses on your behalf, so nothing
 hangs waiting.
+
+### Cost, quota and accounts
+
+`/usage` reads the chat files directly, so it needs nothing installed and keeps
+working whatever else you remove. It reports total and recent cost, the share
+served from cache, a breakdown per project, tokens per day and your dearest
+chats.
+
+Two honest caveats it states itself: token counts are exact, but cost is
+recorded per chat rather than per message, so a chat spanning midnight lands on
+the day it was last active — and chats old enough to predate cost recording show
+`$0.00`, which does not mean they were free.
+
+`/quota`, `/accounts` and `/switch <n>` work through
+[cswap](https://github.com/realiti4/claude-swap), if you have it. They show how
+much of each rate-limit window is spent, when it resets, and which accounts need
+logging in again. Without cswap they say so and nothing else is affected.
+
+Account addresses are **masked** by default (`a***@example.com`), because
+Telegram keeps whatever it is shown. `SHOW_EMAILS` can set that to `full` or
+`none`.
+
+Switching is refused while a chat is working, since credentials would change
+underneath a running turn.
 
 ### Finishing with a chat
 

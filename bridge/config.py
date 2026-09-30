@@ -46,8 +46,12 @@ class Config:
     approval_timeout: float
     machine_label: str
     archive_format: str
-    attach_suffixes: frozenset[str]
-    max_attach_mb: float
+    # Optional knobs carry defaults, so constructing a Config - in a test, or
+    # anywhere else - does not require knowing every setting that exists.
+    attach_suffixes: frozenset[str] = frozenset()
+    max_attach_mb: float = 20.0
+    cswap_cli: Path | None = None
+    show_emails: str = "mask"
 
     @property
     def watches_everything(self) -> bool:
@@ -163,6 +167,13 @@ def load_config(require_token: bool = True) -> Config:
     except ValueError:
         max_attach_mb = 20.0
 
+    from .accounts import find_cswap
+    cswap_cli = find_cswap(os.getenv("CSWAP_CLI", "").strip())
+
+    show_emails = (os.getenv("SHOW_EMAILS", "").strip().lower() or "mask")
+    if show_emails not in ("mask", "full", "none"):
+        raise SystemExit("SHOW_EMAILS must be mask, full or none")
+
     return Config(
         bot_token=token,
         group_id=_optional_int("TELEGRAM_GROUP_ID"),
@@ -179,4 +190,6 @@ def load_config(require_token: bool = True) -> Config:
         archive_format=archive_format,
         attach_suffixes=attach_suffixes,
         max_attach_mb=max_attach_mb,
+        cswap_cli=cswap_cli,
+        show_emails=show_emails,
     )

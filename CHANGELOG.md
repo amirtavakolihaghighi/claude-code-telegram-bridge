@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/usage` reports cost and tokens by project, by day and by chat, read straight
+  from the chat files so it needs no extension installed. It states its own
+  limits: token counts are exact, cost is per chat rather than per message, and
+  chats predating cost recording show `$0.00` rather than pretending to be free.
+- `/quota`, `/accounts` and `/switch` work through
+  [cswap](https://github.com/realiti4/claude-swap) when it is available,
+  showing rate-limit windows, reset times and which accounts need re-login.
+  Without cswap they say so and nothing else changes.
+- Account addresses are masked by default, since Telegram keeps whatever it is
+  shown. `SHOW_EMAILS` allows `full` or `none`.
+- Switching accounts is refused while a chat is working, because credentials
+  would change underneath a running turn.
+
+### Fixed
+
+- Long command answers are split instead of being rejected. `/usage` with many
+  projects could exceed Telegram's 4096-character limit, and a split inside a
+  preformatted block no longer leaves an unbalanced tag.
+
 ## [0.3.0] - 2026-10-01
 
 ### Added

@@ -24,8 +24,12 @@ from telegram.error import TelegramError
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
+from datetime import datetime, timedelta, timezone
+
+from .accounts import Accounts, mask_email
 from .approval import ApprovalService, Pending
 from .config import Config, looks_secret
+from .usage import collect, human_tokens
 from .echo import EchoGuard
 from .export import (read_transcript, render_html, render_markdown,
                      safe_filename)
@@ -57,6 +61,11 @@ REMEMBER = "R"
 SEND_FILE = "f"
 
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+CHART = "\U0001f4ca"
+GAUGE = "\U0001f6e0️"
+BULLET = "•"
+BAR_FULL = "█"
+BAR_EMPTY = "░"
 
 # Registered with Telegram so typing "/" offers them, with descriptions.
 COMMANDS = [
@@ -66,6 +75,10 @@ COMMANDS = [
     BotCommand("projects", "Which projects exist, and which are mirrored"),
     BotCommand("rules", "Things Claude is always allowed to do"),
     BotCommand("forget", "Undo a standing permission, or all of them"),
+    BotCommand("usage", "What your sessions have cost"),
+    BotCommand("quota", "How much of your rate limits is used"),
+    BotCommand("accounts", "Claude accounts and their remaining quota"),
+    BotCommand("switch", "Change which Claude account is in use"),
     BotCommand("file", "Send me a file from this project"),
     BotCommand("archive", "Save this chat as a file, then close the topic"),
     BotCommand("reopen", "Reopen a closed topic so it can continue"),
@@ -77,6 +90,37 @@ COMMANDS = [
 
 def _esc(text: str) -> str:
     return html.escape(text, quote=False)
+
+
+MESSAGE_LIMIT = 3900        # Telegram allows 4096; leave room for safety
+
+
+def _split(text: str) -> list[str]:
+    """Break a long answer on line boundaries, keeping any <pre> block whole."""
+    if len(text) <= MESSAGE_LIMIT:
+        return [text]
+
+    parts: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > MESSAGE_LIMIT and current:
+            parts.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        parts.append(current)
+
+    # A split inside a <pre> would leave an unbalanced tag, so close and reopen.
+    balanced = []
+    for part in parts:
+        if part.count("<pre>") > part.count("</pre>"):
+            part += "</pre>"
+        elif part.count("</pre>") > part.count("<pre>"):
+            part = "<pre>" + part
+        balanced.append(part)
+    return balanced
 
 
 def chat_path(config: Config, session_id: str) -> Path | None:
@@ -96,6 +140,7 @@ class Inbox:
         self.echo = echo
         self.approval = approval
         self.sink = sink        # for closing and reopening topics
+        self.accounts = Accounts(config.cswap_cli)
         self.bot = None         # filled in once the Application is built
 
     # -- plumbing --------------------------------------------------------
@@ -107,12 +152,18 @@ class Inbox:
         return user is not None and user.id == self.config.owner_id
 
     async def _reply(self, update: Update, text: str) -> None:
+        """Answer in the same topic, split if it is over Telegram's limit.
+
+        A long answer - /usage with many projects, /accounts with several
+        accounts - would otherwise be rejected outright.
+        """
         message = update.effective_message
         if message is None:
             return
-        await message.reply_text(text, parse_mode=ParseMode.HTML,
-                                 message_thread_id=message.message_thread_id,
-                                 disable_web_page_preview=True)
+        for part in _split(text):
+            await message.reply_text(part, parse_mode=ParseMode.HTML,
+                                     message_thread_id=message.message_thread_id,
+                                     disable_web_page_preview=True)
 
     def _session_for(self, update: Update) -> str | None:
         message = update.effective_message
@@ -550,6 +601,161 @@ class Inbox:
         else:
             await self._reply(update, "It was already open.")
 
+    # -- usage, quota and accounts ---------------------------------------
+    async def on_usage(self, update: Update,
+                       context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/usage [all] - what your sessions have cost, from the chat files."""
+        if not self._is_owner(update):
+            return
+        everything = bool(context.args) and context.args[0].lower() == "all"
+        projects = None if everything else self.config.watch_projects
+        report = await asyncio.to_thread(collect, self.config.claude_home,
+                                         projects)
+        if not report.sessions:
+            await self._reply(update, "No chats to measure yet.")
+            return
+
+        today = datetime.now(timezone.utc).date()
+        lines = [
+            f"{CHART} <b>Usage</b> · {len(report.sessions)} chats",
+            "",
+            f"{BULLET} <b>Total</b> — ${report.cost:.2f}, "
+            f"{human_tokens(report.tokens)} tokens",
+            f"{BULLET} <b>From cache</b> — {report.cache_share:.0f}% "
+            f"(roughly a tenth of the price)",
+            f"{BULLET} <b>Today</b> — ${report.cost_since(today):.2f}",
+            f"{BULLET} <b>Last 7 days</b> — "
+            f"${report.cost_since(today - timedelta(days=6)):.2f}",
+        ]
+
+        lines += ["", "<b>By project</b>"]
+        unpriced = False
+        for name, cost, tokens in report.by_project()[:8]:
+            note = ""
+            if cost == 0 and tokens:
+                note, unpriced = " (cost not recorded)", True
+            lines.append(f"{BULLET} <b>{_esc(name)}</b> — ${cost:.2f}, "
+                         f"{human_tokens(tokens)}{note}")
+
+        daily = report.tokens_by_day(7)
+        if daily:
+            lines += ["", "<b>Tokens per day</b>",
+                      "<pre>" + "\n".join(
+                          f"{when:%a %d %b}  {human_tokens(tokens):>8}"
+                          for when, tokens in daily) + "</pre>"]
+
+        lines += ["", "<b>Most expensive chats</b>"]
+        for session in report.top_sessions(5):
+            label = session.title or session.session_id[:8]
+            lines.append(f"{BULLET} ${session.cost:.2f} — {_esc(label[:46])}")
+
+        footnotes = ["Cost is recorded per chat, so daily figures place a chat "
+                     "on the day it was last active. Token counts are exact."]
+        if unpriced:
+            footnotes.append("Chats started before Claude Code recorded cost "
+                             "show $0.00 — they were not free.")
+        if not everything:
+            footnotes.append("This covers mirrored projects only; "
+                             "<code>/usage all</code> covers every project.")
+        lines += ["", "<i>" + " ".join(footnotes) + "</i>"]
+
+        await self._reply(update, "\n".join(lines))
+
+    def _describe(self, account) -> str:
+        shown = mask_email(account.email, self.config.show_emails)
+        name = f"<b>{account.number}</b>"
+        if shown:
+            name += f" · <code>{_esc(shown)}</code>"
+        if account.active:
+            name += " ← <b>active</b>"
+        lines = [f"{BULLET} {name}"]
+        if account.needs_login:
+            lines.append("   ⚠️ needs logging in again")
+        for label, window in (("5h", account.five_hour),
+                              ("7d", account.seven_day)):
+            if window is None:
+                continue
+            bar = BAR_FULL * round(window.pct / 10) + \
+                BAR_EMPTY * (10 - round(window.pct / 10))
+            resets = f" resets {window.countdown}" if window.countdown else ""
+            lines.append(f"   <code>{label} {bar} {window.pct:4.0f}%</code>"
+                         f"{resets}")
+        if account.stale:
+            lines.append("   <i>figures are from its last good reading</i>")
+        return "\n".join(lines)
+
+    async def on_quota(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """/quota - how much of the rate-limit windows is used."""
+        if not self._is_owner(update):
+            return
+        if not self.accounts.available:
+            await self._reply(update, f"{WARN} cswap is not installed, so rate "
+                                      f"limits are not visible. "
+                                      f"<code>/usage</code> still works.")
+            return
+        account = await self.accounts.quota()
+        if account is None:
+            await self._reply(update, f"{CROSS} cswap did not report a status.")
+            return
+        ahead = account.seven_day.ahead_of_pace if account.seven_day else None
+        pace = ""
+        if ahead is not None:
+            pace = ("\n\n<i>Ahead of pace for the week.</i>" if ahead
+                    else "\n\n<i>On pace to last the week.</i>")
+        await self._reply(update, f"{GAUGE} <b>Quota</b>\n\n"
+                                  f"{self._describe(account)}{pace}")
+
+    async def on_accounts(self, update: Update,
+                          _: ContextTypes.DEFAULT_TYPE) -> None:
+        """/accounts - every managed account and its remaining quota."""
+        if not self._is_owner(update):
+            return
+        if not self.accounts.available:
+            await self._reply(update, f"{WARN} cswap is not installed. Set "
+                                      f"<code>CSWAP_CLI</code> in .env if it is "
+                                      f"somewhere unusual.")
+            return
+        accounts = await self.accounts.all()
+        if not accounts:
+            await self._reply(update, f"{CROSS} cswap listed no accounts.")
+            return
+        body = "\n\n".join(self._describe(a) for a in accounts)
+        await self._reply(update, f"{GAUGE} <b>Accounts</b>\n\n{body}\n\n"
+                                  f"<i>Switch with "
+                                  f"<code>/switch &lt;number&gt;</code>.</i>")
+
+    async def on_switch(self, update: Update,
+                        context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/switch <number|email> - change which account Claude uses."""
+        if not self._is_owner(update):
+            return
+        if not self.accounts.available:
+            await self._reply(update, f"{WARN} cswap is not installed.")
+            return
+        target = (context.args[0] if context.args else "").strip()
+        if not target:
+            await self._reply(update, "Say which one: <code>/switch 2</code>. "
+                                      "<code>/accounts</code> lists them.")
+            return
+
+        # Credentials change underneath a running turn, so refuse rather than
+        # half-apply it.
+        busy = [sid for sid, _, _, _ in self.state.all_topics()
+                if self.runner.is_busy(sid)]
+        if busy:
+            await self._reply(update, f"{WARN} A chat is still working. Wait for "
+                                      f"it, or send /stop, then switch.")
+            return
+
+        ok, message = await self.accounts.switch(target)
+        if not ok:
+            await self._reply(update, f"{CROSS} Could not switch: "
+                                      f"<pre>{_esc(message[:400])}</pre>")
+            return
+        account = await self.accounts.quota()
+        detail = self._describe(account) if account else ""
+        await self._reply(update, f"{ALLOWED} <b>Switched</b>\n\n{detail}")
+
     async def on_vscode(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """/vscode - a link that opens this chat in the editor."""
         if not self._is_owner(update):
@@ -625,6 +831,10 @@ def build_application(config: Config, state: State, runner: Runner,
     app.add_handler(CommandHandler("projects", inbox.on_projects))
     app.add_handler(CommandHandler("rules", inbox.on_rules))
     app.add_handler(CommandHandler("forget", inbox.on_forget))
+    app.add_handler(CommandHandler("usage", inbox.on_usage))
+    app.add_handler(CommandHandler("quota", inbox.on_quota))
+    app.add_handler(CommandHandler("accounts", inbox.on_accounts))
+    app.add_handler(CommandHandler("switch", inbox.on_switch))
     app.add_handler(CommandHandler("file", inbox.on_file))
     app.add_handler(CommandHandler("archive", inbox.on_archive))
     app.add_handler(CommandHandler("reopen", inbox.on_reopen))
