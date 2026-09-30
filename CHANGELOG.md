@@ -50,6 +50,8 @@ does rather than what changed.
 
 **Running it**
 
+- Recorded paths are read the same way whatever machine the bridge runs on, so
+  a Windows path recorded by Claude Code still shortens correctly elsewhere.
 - `bridge.bat` menu for start, stop, install, logs.
 - `tools.autostart` registers a Windows Scheduled Task that starts at sign-in
   with no window, restarts on failure, and keeps running on battery.
