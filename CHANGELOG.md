@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-01
+
+### Added
+
+- When Claude writes a document, the message carries a button that sends you the
+  file. Markdown, text, HTML, PDF, CSV and images are offered; images arrive as
+  pictures rather than attachments. Code is not offered — attaching every file
+  Claude touches would flood a topic and upload far more than you asked for.
+- `/file <path>` sends any file. Relative paths resolve against the project the
+  topic belongs to.
+- Files that look like credentials (`.env`, `id_rsa`, `*.pem`, `*.key`,
+  `credentials.json`) are never offered and are refused by `/file`, since
+  Telegram keeps a copy of everything sent to it. `/file <path> force` overrides
+  it deliberately.
+- `ATTACH_SUFFIXES` and `MAX_ATTACH_MB` control which files are offered and how
+  large they may be.
+
+### Changed
+
+- A message carrying a button is posted on its own rather than merged with its
+  neighbours, so the button cannot end up under unrelated text.
+
+### Note
+
+Local file paths cannot be made clickable. Telegram accepts any `href` but keeps
+only `http` and `https`, silently discarding relative paths, `file://` and
+`vscode://` targets. Sending the file is the workable alternative.
+
 ## [0.2.1] - 2026-09-30
 
 ### Fixed
@@ -113,7 +141,8 @@ does rather than what changed.
 - Subagent output and Claude's thinking are not mirrored.
 - Tool input is truncated at 600 characters, output at 900.
 
-[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/releases/tag/v0.1.0
