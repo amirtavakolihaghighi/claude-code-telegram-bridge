@@ -339,6 +339,30 @@ Adding a bot to a group it is already in is fine; Telegram allows several.
 
 The first machine keeps running throughout — different tokens, no conflict.
 
+## If you move a project
+
+Claude Code files chats under a folder named after the project's path, so moving
+a project hides its chats until you rename that folder to match the new path.
+Once you have done that, VS Code finds them again.
+
+The bridge needs one more step, because the path recorded *inside* each chat
+still points at the old location:
+
+1. Rename the folder in `%USERPROFILE%\.claude\projects\` as usual.
+2. **Send one message in that chat from VS Code.** This writes a record carrying
+   the new path.
+3. Restart the bridge — `bridge.bat` → **4**.
+
+After that the bridge recognises the project by its new path, the topic is
+renamed to match, and replying from Telegram works again.
+
+**Until you do step 2 and 3, mirroring keeps working but replying does not** —
+the bridge would try to run Claude in a folder that no longer exists, and tells
+you so rather than guessing.
+
+Nothing is lost either way: the topic, its history and its link to the chat all
+survive a move. Only the "where do I run this" answer goes stale.
+
 ### Do not sync the chat files themselves
 
 Do **not** put `~/.claude/projects` in OneDrive, Dropbox or similar. Those files
