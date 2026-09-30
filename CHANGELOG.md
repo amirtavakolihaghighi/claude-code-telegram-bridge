@@ -7,14 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [0.2.1] - 2026-09-30
 
-- Markdown that Telegram cannot show natively is now translated rather than
-  arriving as literal syntax. Headings become bold, two-column tables become
-  labelled lists, wider tables keep their shape in a monospace block, bullets
-  become real bullets, and rules become a line. Links, italics and
-  strikethrough render properly; markers inside code spans and fenced blocks
-  are left alone.
+### Fixed
+
+- Markdown that Telegram cannot show natively arrived as literal syntax — a
+  heading appeared as `## Final state`, and a table as rows of pipes. It is now
+  translated into what Telegram can render: headings become bold, two-column
+  tables become labelled lists, wider tables keep their shape in a monospace
+  block, bullets become real bullets, and rules become a line. Links, italics
+  and strikethrough render properly.
+- Emphasis markers inside code spans and fenced blocks are left alone, so
+  `a * b ** c` stays arithmetic instead of turning into italics.
 
 ## [0.2.0] - 2026-09-30
 
@@ -109,6 +113,7 @@ does rather than what changed.
 - Subagent output and Claude's thinking are not mirrored.
 - Tool input is truncated at 600 characters, output at 900.
 
-[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/releases/tag/v0.1.0
