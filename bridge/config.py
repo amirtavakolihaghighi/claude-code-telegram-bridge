@@ -12,6 +12,24 @@ ROOT = Path(__file__).resolve().parent.parent
 PERMISSION_MODES = ("acceptEdits", "auto", "bypassPermissions", "manual",
                     "dontAsk", "plan")
 
+# Which files get an offer button when Claude writes one. Documents, not code:
+# a README or a handover note is worth reading on a phone, a .py file is not.
+DEFAULT_ATTACH = ("md,markdown,txt,rst,adoc,org,html,htm,pdf,csv,"
+                  "png,jpg,jpeg,gif,webp,svg")
+
+# Names that should never be sent to Telegram without you saying so explicitly.
+SECRET_NAMES = {".env", ".npmrc", ".netrc", ".pypirc", "credentials",
+                "credentials.json", "id_rsa", "id_ed25519", "secrets.json"}
+SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".keystore", ".jks", ".ppk"}
+
+
+def looks_secret(path: Path | str) -> bool:
+    """A conservative guess at files that carry credentials."""
+    name = Path(path).name.lower()
+    if name in SECRET_NAMES or name.startswith(".env"):
+        return True
+    return Path(name).suffix in SECRET_SUFFIXES
+
 
 @dataclass(frozen=True)
 class Config:
@@ -28,6 +46,8 @@ class Config:
     approval_timeout: float
     machine_label: str
     archive_format: str
+    attach_suffixes: frozenset[str]
+    max_attach_mb: float
 
     @property
     def watches_everything(self) -> bool:
@@ -133,6 +153,16 @@ def load_config(require_token: bool = True) -> Config:
     if archive_format not in ("md", "html", "both"):
         raise SystemExit("ARCHIVE_FORMAT must be md, html or both")
 
+    raw_suffixes = os.getenv("ATTACH_SUFFIXES", "").strip() or DEFAULT_ATTACH
+    attach_suffixes = frozenset(
+        "." + part.strip().lstrip(".").lower()
+        for part in raw_suffixes.split(",") if part.strip())
+
+    try:
+        max_attach_mb = float(os.getenv("MAX_ATTACH_MB", "20"))
+    except ValueError:
+        max_attach_mb = 20.0
+
     return Config(
         bot_token=token,
         group_id=_optional_int("TELEGRAM_GROUP_ID"),
@@ -147,4 +177,6 @@ def load_config(require_token: bool = True) -> Config:
         approval_timeout=approval_timeout,
         machine_label=os.getenv("MACHINE_LABEL", "").strip(),
         archive_format=archive_format,
+        attach_suffixes=attach_suffixes,
+        max_attach_mb=max_attach_mb,
     )

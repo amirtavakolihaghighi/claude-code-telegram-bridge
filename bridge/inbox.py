@@ -25,7 +25,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
 from .approval import ApprovalService, Pending
-from .config import Config
+from .config import Config, looks_secret
 from .echo import EchoGuard
 from .export import (read_transcript, render_html, render_markdown,
                      safe_filename)
@@ -54,6 +54,9 @@ ALLOW = "a"
 DENY = "d"
 ALLOW_ALL = "A"
 REMEMBER = "R"
+SEND_FILE = "f"
+
+PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 # Registered with Telegram so typing "/" offers them, with descriptions.
 COMMANDS = [
@@ -63,6 +66,7 @@ COMMANDS = [
     BotCommand("projects", "Which projects exist, and which are mirrored"),
     BotCommand("rules", "Things Claude is always allowed to do"),
     BotCommand("forget", "Undo a standing permission, or all of them"),
+    BotCommand("file", "Send me a file from this project"),
     BotCommand("archive", "Save this chat as a file, then close the topic"),
     BotCommand("reopen", "Reopen a closed topic so it can continue"),
     BotCommand("vscode", "Link that opens this chat in the editor"),
@@ -176,6 +180,14 @@ class Inbox:
             return
 
         action, _, request_id = query.data.partition("|")
+
+        if action == SEND_FILE:
+            await query.answer("Sending...")
+            path = self.state.attachment_path(int(request_id)) \
+                if request_id.isdigit() else None
+            await self._send_file(query, Path(path) if path else None)
+            return
+
         allow = action in (ALLOW, ALLOW_ALL, REMEMBER)
         handled = self.approval.resolve(request_id, allow=allow,
                                         always=action == ALLOW_ALL,
@@ -217,6 +229,85 @@ class Inbox:
                 await asyncio.wait_for(stop.wait(), timeout=4.0)
             except asyncio.TimeoutError:
                 continue
+
+    # -- sending files ---------------------------------------------------
+    async def _send_file(self, source, path: Path | None,
+                         thread_id: int | None = None) -> None:
+        """Put a file into the topic: photos inline, everything else as a
+        document."""
+        message = getattr(source, "message", None) or source.effective_message
+        thread_id = thread_id if thread_id is not None else \
+            (message.message_thread_id if message else None)
+
+        async def say(text: str) -> None:
+            await self.bot.send_message(chat_id=self.config.group_id,
+                                        message_thread_id=thread_id, text=text,
+                                        parse_mode=ParseMode.HTML)
+
+        if path is None:
+            await say(f"{WARN} I no longer know which file that was.")
+            return
+        if not path.is_file():
+            await say(f"{WARN} <code>{_esc(path.name)}</code> is not there any "
+                      f"more.")
+            return
+
+        size = path.stat().st_size
+        if size > self.config.max_attach_mb * 1e6:
+            await say(f"{WARN} <code>{_esc(path.name)}</code> is "
+                      f"{size / 1e6:.1f} MB, over the "
+                      f"{self.config.max_attach_mb:.0f} MB limit.")
+            return
+
+        data = InputFile(BytesIO(path.read_bytes()), filename=path.name)
+        caption = f"<code>{_esc(str(path))}</code>"
+        try:
+            if path.suffix.lower() in PHOTO_SUFFIXES:
+                await self.bot.send_photo(chat_id=self.config.group_id,
+                                          message_thread_id=thread_id,
+                                          photo=data, caption=caption,
+                                          parse_mode=ParseMode.HTML)
+            else:
+                await self.bot.send_document(chat_id=self.config.group_id,
+                                             message_thread_id=thread_id,
+                                             document=data, caption=caption,
+                                             parse_mode=ParseMode.HTML)
+        except TelegramError as exc:
+            await say(f"{CROSS} Telegram refused it: {_esc(str(exc))}")
+
+    async def on_file(self, update: Update,
+                      context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/file <path> [force] - send any file, resolved against this project."""
+        if not self._is_owner(update):
+            return
+        args = list(context.args or [])
+        force = bool(args) and args[-1].lower() in ("force", "!")
+        if force:
+            args = args[:-1]
+        wanted = " ".join(args).strip().strip('"')
+        if not wanted:
+            await self._reply(update, "Say which file: "
+                                      "<code>/file README.md</code>")
+            return
+
+        path = Path(wanted)
+        if not path.is_absolute():
+            project = self._project_for(self._session_for(update))
+            if project is None:
+                await self._reply(update, "Send this from a chat's topic, or "
+                                          "give the full path.")
+                return
+            path = project / path
+
+        if looks_secret(path) and not force:
+            await self._reply(
+                update,
+                f"{WARN} <code>{_esc(path.name)}</code> looks like it holds "
+                f"credentials, and Telegram would keep a copy. Send "
+                f"<code>/file {_esc(wanted)} force</code> if you mean it.")
+            return
+
+        await self._send_file(update, path)
 
     # -- the main path ---------------------------------------------------
     async def _send_prompt(self, update: Update, session_id: str | None,
@@ -534,6 +625,7 @@ def build_application(config: Config, state: State, runner: Runner,
     app.add_handler(CommandHandler("projects", inbox.on_projects))
     app.add_handler(CommandHandler("rules", inbox.on_rules))
     app.add_handler(CommandHandler("forget", inbox.on_forget))
+    app.add_handler(CommandHandler("file", inbox.on_file))
     app.add_handler(CommandHandler("archive", inbox.on_archive))
     app.add_handler(CommandHandler("reopen", inbox.on_reopen))
     app.add_handler(CommandHandler("vscode", inbox.on_vscode))

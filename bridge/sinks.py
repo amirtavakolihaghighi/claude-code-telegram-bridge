@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter, TelegramError
 
 from .appearance import colour_for, icon_for
+from .config import looks_secret
 from .format import OutMessage
 from .state import State
 
@@ -24,6 +26,7 @@ TOPIC_NAME_LIMIT = 128
 SEND_SPACING = 3.2      # seconds between posts, to stay under ~20/minute
 MERGE_LIMIT = 3800      # characters; Telegram's hard limit is 4096
 MERGE_MAX = 8           # never glue more than this many together
+CLIP = chr(0x1F4CE)     # paperclip, on the offer button
 
 
 def topic_name(session_id: str, title: str | None) -> str:
@@ -65,10 +68,11 @@ class ConsoleSink:
 class TelegramSink:
     """Posts into one topic per chat inside a Topics-enabled supergroup."""
 
-    def __init__(self, bot: Bot, group_id: int, state: State):
+    def __init__(self, bot: Bot, group_id: int, state: State, config=None):
         self.bot = bot
         self.group_id = group_id
         self.state = state
+        self.config = config
         self._pending: list[tuple[str, OutMessage]] = []
         self._wake = asyncio.Event()
         self._idle = asyncio.Event()
@@ -100,16 +104,35 @@ class TelegramSink:
         self._idle.clear()
         self._wake.set()
 
-    def _take_batch(self) -> tuple[str, str, bool]:
+    def offerable(self, path: str) -> bool:
+        """Is this a file worth offering as an attachment?"""
+        if not path or self.config is None:
+            return False
+        target = Path(path)
+        if looks_secret(target) or target.suffix.lower() not in \
+                self.config.attach_suffixes:
+            return False
+        try:
+            return (target.is_file()
+                    and target.stat().st_size <= self.config.max_attach_mb * 1e6)
+        except OSError:
+            return False
+
+    def _take_batch(self) -> tuple[str, str, bool, str]:
         """Pop one post: the next message plus any that can ride along with it."""
         session_id, first = self._pending.pop(0)
         parts = [first.html]
         silent = first.silent
         total = len(first.html)
+        attach = first.attach if self.offerable(first.attach) else ""
 
-        while self._pending and len(parts) < MERGE_MAX:
+        # A message carrying a button is posted on its own, so the button
+        # cannot end up attached to somebody else's text.
+        while self._pending and len(parts) < MERGE_MAX and not attach:
             next_session, candidate = self._pending[0]
             if next_session != session_id:
+                break
+            if candidate.attach and self.offerable(candidate.attach):
                 break
             if total + len(candidate.html) + 2 > MERGE_LIMIT:
                 break
@@ -119,7 +142,7 @@ class TelegramSink:
             # If anything in the batch deserves a ping, the whole post pings.
             silent = silent and candidate.silent
 
-        return session_id, "\n\n".join(parts), silent
+        return session_id, "\n\n".join(parts), silent, attach
 
     async def _drain(self) -> None:
         posted = 0
@@ -129,8 +152,8 @@ class TelegramSink:
                 self._wake.clear()
                 await self._wake.wait()
                 continue
-            session_id, text, silent = self._take_batch()
-            await self._deliver(session_id, text, silent)
+            session_id, text, silent, attach = self._take_batch()
+            await self._deliver(session_id, text, silent, attach)
             posted += 1
             # A backfill takes hours; say where it has got to now and then.
             if posted % 50 == 0:
@@ -255,7 +278,16 @@ class TelegramSink:
         self.state.set_closed(session_id, False)
         return True
 
-    async def _deliver(self, session_id: str, text: str, silent: bool) -> None:
+    def _attach_button(self, path: str) -> InlineKeyboardMarkup | None:
+        if not path:
+            return None
+        size = Path(path).stat().st_size
+        label = f"{CLIP} Send {Path(path).name} ({size // 1024 or 1} KB)"
+        return InlineKeyboardMarkup([[InlineKeyboardButton(
+            label[:64], callback_data=f"f|{self.state.remember_attachment(path)}")]])
+
+    async def _deliver(self, session_id: str, text: str, silent: bool,
+                       attach: str = "") -> None:
         thread_id = await self._ensure_thread(session_id)
         if thread_id is None:
             return
@@ -276,6 +308,7 @@ class TelegramSink:
                     parse_mode=ParseMode.HTML,
                     disable_notification=silent,
                     disable_web_page_preview=True,
+                    reply_markup=self._attach_button(attach),
                 )
                 return
             except RetryAfter as exc:

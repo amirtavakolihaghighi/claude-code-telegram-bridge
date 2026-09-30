@@ -121,7 +121,7 @@ async def run_live(args) -> int:
                            write_timeout=30.0, pool_timeout=15.0)
 
     app = build_application(config, state, runner, echo, request, approval)
-    sink = TelegramSink(app.bot, config.group_id, state)
+    sink = TelegramSink(app.bot, config.group_id, state, config)
     app.bot_data["inbox"].sink = sink       # /archive and /reopen need it
     mirror = Mirror(config, sink, state, backfill=args.backfill, echo=echo,
                     import_all=args.import_all)

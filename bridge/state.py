@@ -31,6 +31,11 @@ class State:
                 label   TEXT NOT NULL,
                 created REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS attachments (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                path    TEXT NOT NULL,
+                created REAL NOT NULL
+            );
             """
         )
         self._add_column("topics", "project", "TEXT")
@@ -136,6 +141,25 @@ class State:
         cursor = self.conn.execute("DELETE FROM allow_rules")
         self.conn.commit()
         return cursor.rowcount
+
+    # -- offered files ---------------------------------------------------
+    def remember_attachment(self, path: str) -> int:
+        """A button can only carry 64 bytes, so the path is looked up by id."""
+        row = self.conn.execute(
+            "SELECT id FROM attachments WHERE path = ?", (path,)).fetchone()
+        if row:
+            return row[0]
+        cursor = self.conn.execute(
+            "INSERT INTO attachments (path, created) VALUES (?, ?)",
+            (path, time.time()))
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def attachment_path(self, attachment_id: int) -> str | None:
+        row = self.conn.execute(
+            "SELECT path FROM attachments WHERE id = ?", (attachment_id,)
+        ).fetchone()
+        return row[0] if row else None
 
     def close(self) -> None:
         self.conn.close()

@@ -43,6 +43,7 @@ def config(claude_home, tmp_path):
         state_db=tmp_path / "state.db", claude_cli=None,
         permission_mode="auto", replies_enabled=True, approval_timeout=5,
         machine_label="", archive_format="both",
+        attach_suffixes=frozenset({".md", ".txt", ".png"}), max_attach_mb=20.0,
     )
 
 

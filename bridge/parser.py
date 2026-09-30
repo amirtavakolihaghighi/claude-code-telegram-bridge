@@ -199,7 +199,9 @@ def parse_record(record: dict) -> list[Event]:
                 text=describe_tool(name, payload), tool_name=name,
                 uuid=uuid, timestamp=timestamp,
                 extra={"id": block.get("id", ""),
-                       "input": tool_input(name, payload)},
+                       "input": tool_input(name, payload),
+                       # Kept so a written document can be offered as a file.
+                       "file_path": str(payload.get("file_path") or "")},
             ))
 
         elif block_type == "tool_result" and kind == "user":

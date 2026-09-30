@@ -45,6 +45,9 @@ ARROW = "↳"
 class OutMessage:
     html: str
     silent: bool = True
+    # A file this message could offer. The sink decides whether to show the
+    # button, since only it knows which kinds are wanted.
+    attach: str = ""
 
 
 def _escape(text: str) -> str:
@@ -245,7 +248,8 @@ def _render_tool(event: Event) -> list[OutMessage]:
     if tool_out:
         parts.append(f"{ARROW} {_quote(tool_out)}")
 
-    return [OutMessage("\n".join(parts), silent=True)]
+    written = "" if failed else str(event.extra.get("file_path") or "")
+    return [OutMessage("\n".join(parts), silent=True, attach=written)]
 
 
 def render(event: Event) -> list[OutMessage]:
