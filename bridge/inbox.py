@@ -285,8 +285,11 @@ class Inbox:
                 await query.edit_message_reply_markup(
                     reply_markup=self._question_markup(asked))
                 return True
-            except BadRequest:
-                return False        # unchanged or gone; retrying cannot help
+            except BadRequest as exc:
+                # Unchanged or gone; retrying cannot help, but say so - silence
+                # here made a missing tick impossible to diagnose.
+                log.info("keyboard not redrawn: %s", exc)
+                return False
             except TelegramError as exc:
                 log.info("redraw attempt %d failed: %s", attempt + 1, exc)
                 await asyncio.sleep(1)
@@ -361,6 +364,7 @@ class Inbox:
             await query.answer()
             return
 
+        log.info("button tapped: %s", query.data)
         action, _, request_id = query.data.partition("|")
 
         if action in (QUESTION, QUESTION_DONE):
@@ -968,6 +972,13 @@ def build_application(config: Config, state: State, runner: Runner,
     app = (Application.builder()
            .token(config.bot_token)
            .request(request)
+           # Without this, updates are handled strictly one at a time. A message
+           # handler runs for as long as Claude's whole turn, so a button tapped
+           # during that turn would wait in the queue until it finished - and a
+           # question Claude asks mid-turn could never be answered at all, since
+           # the answer arrives as a tap. Telegram gives up on an unanswered tap
+           # after a few seconds, which is exactly what it looked like.
+           .concurrent_updates(True)
            .build())
     inbox.bot = app.bot
     # The sink needs app.bot, so it is built after this and attached here.

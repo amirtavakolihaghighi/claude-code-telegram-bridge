@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Buttons did nothing while Claude was working, which made a question Claude
+  asked mid-turn impossible to answer. Telegram updates were handled strictly one
+  at a time, and a message handler runs for as long as the whole turn - so a tap
+  waited in the queue behind it, and Telegram abandoned the unanswered tap after
+  a few seconds. That was the deadlock: the only way to answer arrived through
+  the channel the question was blocking. Updates are now handled concurrently.
+- A tap is logged on arrival, and a keyboard that could not be redrawn says why,
+  so the next problem of this kind is visible in the log rather than guessed at.
+
 ## [0.4.1] - 2026-10-01
 
 Making the new question buttons actually usable.
