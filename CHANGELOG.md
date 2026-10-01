@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A question nobody answered was left looking live: taps did nothing visible and
+  the selection seemed impossible to confirm. It is now struck through with its
+  buttons removed when it expires, and tapping an expired one says so.
+- The confirm button read "Pick at least one" until something was ticked, which
+  hid that it was the way to send. It always reads as a Send button now, with a
+  count.
+- Each tap confirms what it added or removed, so something visibly happens even
+  if editing the keyboard is slow.
+- Claude waited fifteen minutes for an answer, leaving the topic showing
+  "typing..." and saying nothing. Now five, configurable as QUESTION_TIMEOUT.
+- The caller and the bridge both gave up at the same moment, so a missed answer
+  surfaced as a bare connection timeout instead of an explanation. The caller
+  now outlasts the bridge by a minute.
+
 ## [0.4.0] - 2026-10-01
 
 Knowing what you are spending, and being asked instead of guessed at.

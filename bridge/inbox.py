@@ -62,6 +62,7 @@ SEND_FILE = "f"
 QUESTION = "q"
 QUESTION_DONE = "Q"
 TICK = "✅"
+SEND = "\U0001f4e4"
 
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 CHART = "\U0001f4ca"
@@ -233,10 +234,12 @@ class Inbox:
                 callback_data=f"{QUESTION}|{asked.request_id}|{index}")])
         if asked.allow_multiple:
             count = len(asked.picked)
+            # Always reads as a send button: labelling it "pick one first" hid
+            # what it was for, so the selection looked impossible to confirm.
+            label = f"{SEND} Send answer" if count == 1 else \
+                f"{SEND} Send {count} answers" if count else f"{SEND} Send"
             rows.append([InlineKeyboardButton(
-                f"{ALLOWED} Send {count} answer(s)" if count
-                else "Pick at least one",
-                callback_data=f"{QUESTION_DONE}|{asked.request_id}|0")])
+                label, callback_data=f"{QUESTION_DONE}|{asked.request_id}|0")])
         return InlineKeyboardMarkup(rows)
 
     async def send_question(self, asked) -> None:
@@ -244,13 +247,29 @@ class Inbox:
         if self.bot is None or self.config.group_id is None:
             raise RuntimeError("not connected to Telegram yet")
         thread_id, _ = self.state.get_topic(asked.session_id)
-        hint = ("\n<i>Tick any that apply, then send.</i>"
+        hint = ("\n\n<i>Tap the ones that apply, then Send.</i>"
                 if asked.allow_multiple else "")
-        return await self.bot.send_message(
+        message = await self.bot.send_message(
             chat_id=self.config.group_id, message_thread_id=thread_id,
             text=f"{ASK} <b>Claude is asking</b>\n\n{_esc(asked.question)}{hint}",
             parse_mode=ParseMode.HTML, disable_notification=False,
             reply_markup=self._question_markup(asked))
+        asked.message_id = message.message_id
+        return message
+
+    async def close_question(self, asked) -> None:
+        """Nobody answered: take the buttons away and say what happened."""
+        if self.bot is None or asked.message_id is None:
+            return
+        try:
+            await self.bot.edit_message_text(
+                chat_id=self.config.group_id, message_id=asked.message_id,
+                text=f"{ASK} <s>{_esc(asked.question)}</s>\n\n"
+                     f"{WARN} <i>No answer, so Claude carried on without "
+                     f"one.</i>",
+                parse_mode=ParseMode.HTML)
+        except TelegramError:
+            pass
 
     async def _on_question_button(self, query, action: str, rest: str) -> None:
         request_id, _, raw_index = rest.partition("|")
@@ -263,13 +282,22 @@ class Inbox:
 
         asked = approval.questions.get(request_id)
         if asked is None:
-            await query.answer("That question has already been answered.")
+            # Expired or already answered. Say so plainly and take the buttons
+            # away, so it stops looking like something that can be tapped.
+            await query.answer("That question has expired - Claude moved on.",
+                               show_alert=True)
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except TelegramError:
+                pass
             return
 
-        # Multiple choice: tick in place and wait for the confirm button.
+        # Multiple choice: tick in place and wait for the send button.
         if asked.allow_multiple and action == QUESTION:
             approval.toggle(request_id, index)
-            await query.answer()
+            ticked = index in asked.picked
+            option = asked.options[index] if index < len(asked.options) else ""
+            await query.answer(f"{'Added' if ticked else 'Removed'}: {option}"[:200])
             try:
                 await query.edit_message_reply_markup(
                     reply_markup=self._question_markup(asked))
@@ -279,7 +307,8 @@ class Inbox:
 
         indexes = sorted(asked.picked) if action == QUESTION_DONE else [index]
         if not indexes:
-            await query.answer("Tick at least one first.", show_alert=True)
+            await query.answer("Tap an option first, then Send.",
+                               show_alert=True)
             return
 
         answered = approval.answer(request_id, indexes)
@@ -922,6 +951,7 @@ def build_application(config: Config, state: State, runner: Runner,
     if approval is not None:
         approval.set_notifier(inbox.send_approval)
         approval.set_question_notifier(inbox.send_question)
+        approval.set_question_closer(inbox.close_question)
 
     app.add_handler(CommandHandler("new", inbox.on_new))
     app.add_handler(CommandHandler("c", inbox.on_say))

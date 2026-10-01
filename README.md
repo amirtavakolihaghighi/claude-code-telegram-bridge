@@ -231,16 +231,20 @@ answers apply, the buttons tick instead, and a confirm button sends them
 together:
 
 ```text
-Tick any that apply, then send.
+Tap the ones that apply, then Send.
 
-[ ✅ Tests      ]
-[ Docs          ]
-[ ✅ CI         ]
-[ ✅ Send 2 answer(s) ]
+[ ✅ Tests          ]
+[ Docs              ]
+[ ✅ CI             ]
+[ 📤 Send 2 answers ]
 ```
 
-If you do not answer within fifteen minutes, Claude is told so and carries on
-without you rather than hanging.
+Each tap confirms what it did, and the Send button always reads as one, so the
+selection is never left looking unconfirmable.
+
+If you do not answer within five minutes, the question is struck through, its
+buttons are removed, and Claude is told so and carries on rather than hanging.
+An expired question says so if you tap it, instead of silently doing nothing.
 
 This works through a small MCP server in `hooks/ask_mcp.py` — a standard way for
 a tool to be offered to Claude. Claude Code starts it, sees a tool called

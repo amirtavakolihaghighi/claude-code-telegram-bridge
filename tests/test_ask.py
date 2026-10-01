@@ -102,6 +102,51 @@ async def test_answering_a_question_that_is_gone_is_harmless(tmp_path):
     assert service.toggle("nope", 0) is None
 
 
+async def test_an_unanswered_question_is_closed_rather_than_left_live(tmp_path):
+    """Taps on an expired question did nothing visible, so it looked broken."""
+    service = ApprovalService(State(tmp_path / "s.db"), question_timeout=0.05)
+    closed = []
+
+    async def notice(asked):
+        asked.message_id = 123
+
+    async def close(asked):
+        closed.append(asked.message_id)
+
+    service.set_question_notifier(notice)
+    service.set_question_closer(close)
+    await service.ask_question("s1", "Which?", ["a", "b"], True)
+    assert closed == [123]
+
+
+async def test_an_answered_question_is_not_closed_twice(tmp_path):
+    service = ApprovalService(State(tmp_path / "s.db"), question_timeout=5)
+    closed = []
+
+    async def answer_at_once(asked):
+        service.answer(asked.request_id, [0])
+
+    service.set_question_notifier(answer_at_once)
+    service.set_question_closer(lambda asked: closed.append(1))
+    await service.ask_question("s1", "Which?", ["a", "b"], False)
+    assert closed == []
+
+
+async def test_a_failing_closer_does_not_break_the_answer(tmp_path):
+    service = ApprovalService(State(tmp_path / "s.db"), question_timeout=0.05)
+
+    async def notice(asked):
+        return
+
+    async def broken(asked):
+        raise RuntimeError("telegram said no")
+
+    service.set_question_notifier(notice)
+    service.set_question_closer(broken)
+    answer = await service.ask_question("s1", "Which?", ["a", "b"], False)
+    assert answer["chosen"] == []
+
+
 # -- the MCP server itself ----------------------------------------------------
 def talk_to_mcp(messages: list[dict], env: dict | None = None) -> list[dict]:
     """Send JSON-RPC lines to the server and collect its replies."""

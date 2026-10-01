@@ -69,6 +69,9 @@ class Question:
     allow_multiple: bool
     future: asyncio.Future = field(repr=False)
     picked: set[int] = field(default_factory=set)
+    # Set once posted, so an expired question can be struck through rather than
+    # left looking live and ignoring taps.
+    message_id: int | None = None
 
 
 class ApprovalService:
@@ -90,6 +93,7 @@ class ApprovalService:
         self._server: asyncio.Server | None = None
         self._ask_hook = None       # set by whoever can post to Telegram
         self._question_hook = None
+        self._question_closer = None
 
     def set_notifier(self, callback) -> None:
         """callback(pending) -> awaitable; posts the buttons."""
@@ -98,6 +102,10 @@ class ApprovalService:
     def set_question_notifier(self, callback) -> None:
         """callback(question) -> awaitable; posts the choices."""
         self._question_hook = callback
+
+    def set_question_closer(self, callback) -> None:
+        """callback(question) -> awaitable; marks an unanswered question dead."""
+        self._question_closer = callback
 
     # -- server ----------------------------------------------------------
     async def start(self) -> None:
@@ -260,6 +268,12 @@ class ApprovalService:
         except asyncio.TimeoutError:
             log.info("no answer after %.0fs; telling Claude to carry on",
                      self.question_timeout)
+            # Strike the message out, so it is not left looking answerable.
+            if self._question_closer is not None:
+                try:
+                    await self._question_closer(pending)
+                except Exception:
+                    log.warning("could not mark the question as expired")
             return {"chosen": [], "reason": "you did not answer in time"}
         finally:
             self.questions.pop(request_id, None)
