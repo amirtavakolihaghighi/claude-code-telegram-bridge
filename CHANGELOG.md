@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- /cost reports what this chat and today have cost, replacing the footer that
+  used to post itself.
+
+### Removed
+
+- The "turn finished" cost footer. It appeared whenever a session's cost was
+  written - every time Claude exited and every time a VS Code window closed -
+  so a running total turned up in chats where nothing had happened. Ask with
+  /cost or /usage instead.
+
 ### Fixed
 
+- A console window no longer opens over whatever you are doing each time a
+  message arrives. The spawned Claude is given no console on Windows.
 - Buttons did nothing while Claude was working, which made a question Claude
   asked mid-turn impossible to answer. Telegram updates were handled strictly one
   at a time, and a message handler runs for as long as the whole turn - so a tap

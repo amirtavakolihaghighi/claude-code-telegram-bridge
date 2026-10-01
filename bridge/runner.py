@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
@@ -27,6 +28,9 @@ log = logging.getLogger(__name__)
 
 RUN_TIMEOUT = 3600.0        # seconds; a very long turn is still a finite one
 HOOK_TIMEOUT = 420          # seconds Claude Code waits for our permission hook
+# Keep the spawned Claude headless on Windows; harmless elsewhere.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 RUNTIME_DIR = ROOT / "runtime"
 HOOK_SCRIPT = ROOT / "hooks" / "permission_hook.py"
 ASK_SCRIPT = ROOT / "hooks" / "ask_mcp.py"
@@ -193,6 +197,10 @@ class Runner:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=self._environment(target),
+                    # Without this Windows gives the child a console, so a black
+                    # window appears over whatever you are doing every time a
+                    # message arrives - and stays for the whole turn.
+                    creationflags=NO_WINDOW,
                 )
             except OSError as exc:
                 return RunResult(False, target, f"could not start claude: {exc}")

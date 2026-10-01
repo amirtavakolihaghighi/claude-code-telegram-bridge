@@ -72,9 +72,11 @@ def test_tool_messages_never_notify():
     assert render(event)[0].silent is True
 
 
-def test_the_end_of_turn_shows_the_cost():
-    html = render(Event("turn_end", "s1", extra={"cost": 0.3712}))[0].html
-    assert "$0.37" in html
+def test_the_end_of_turn_says_nothing():
+    """It used to post a running total whenever a session's cost was written -
+    every Claude exit and every window close - in chats where nothing had
+    happened. /cost and /usage replace it."""
+    assert render(Event("turn_end", "s1", extra={"cost": 0.3712})) == []
 
 
 def test_an_empty_message_renders_nothing():

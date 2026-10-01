@@ -79,6 +79,7 @@ COMMANDS = [
     BotCommand("projects", "Which projects exist, and which are mirrored"),
     BotCommand("rules", "Things Claude is always allowed to do"),
     BotCommand("forget", "Undo a standing permission, or all of them"),
+    BotCommand("cost", "What this chat and today have cost"),
     BotCommand("usage", "What your sessions have cost"),
     BotCommand("quota", "How much of your rate limits is used"),
     BotCommand("accounts", "Claude accounts and their remaining quota"),
@@ -800,6 +801,35 @@ class Inbox:
 
         await self._reply(update, "\n".join(lines))
 
+    async def on_cost(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """/cost - what this chat has cost, and today across everything."""
+        if not self._is_owner(update):
+            return
+        session_id = self._session_for(update)
+        report = await asyncio.to_thread(collect, self.config.claude_home, None)
+        today = datetime.now(timezone.utc).date()
+
+        lines = [f"{CHART} <b>Cost</b>", ""]
+        mine = next((s for s in report.sessions if s.session_id == session_id),
+                    None)
+        if mine is not None:
+            label = mine.title or session_id[:8]
+            if mine.cost:
+                lines.append(f"{BULLET} <b>This chat</b> — ${mine.cost:.2f}, "
+                             f"{human_tokens(mine.total_tokens)} tokens")
+            else:
+                lines.append(f"{BULLET} <b>This chat</b> — "
+                             f"{human_tokens(mine.total_tokens)} tokens, cost "
+                             f"not recorded")
+            lines.append(f"   <i>{_esc(label[:50])}</i>")
+        lines += [
+            f"{BULLET} <b>Today</b> — ${report.cost_since(today):.2f}",
+            f"{BULLET} <b>Everything</b> — ${report.cost:.2f}",
+            "",
+            "<i>/usage for the full breakdown.</i>",
+        ]
+        await self._reply(update, "\n".join(lines))
+
     def _describe(self, account) -> str:
         shown = mask_email(account.email, self.config.show_emails)
         name = f"<b>{account.number}</b>"
@@ -994,6 +1024,7 @@ def build_application(config: Config, state: State, runner: Runner,
     app.add_handler(CommandHandler("projects", inbox.on_projects))
     app.add_handler(CommandHandler("rules", inbox.on_rules))
     app.add_handler(CommandHandler("forget", inbox.on_forget))
+    app.add_handler(CommandHandler("cost", inbox.on_cost))
     app.add_handler(CommandHandler("usage", inbox.on_usage))
     app.add_handler(CommandHandler("quota", inbox.on_quota))
     app.add_handler(CommandHandler("accounts", inbox.on_accounts))

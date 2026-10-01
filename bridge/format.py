@@ -258,11 +258,11 @@ def render(event: Event) -> list[OutMessage]:
         return _render_tool(event)
 
     if event.kind == "turn_end":
-        cost = event.extra.get("cost")
-        if cost is None:
-            return []
-        return [OutMessage(f"{DONE_ICON} <i>turn finished · ${cost:.2f}</i>",
-                           silent=True)]
+        # Deliberately silent. This fired whenever a session's cost was written -
+        # every time Claude exited or a VS Code window closed - which meant a
+        # running total appearing in chats long after anything had happened in
+        # them. Ask for it with /cost or /usage instead.
+        return []
 
     if event.kind in ("user", "assistant"):
         bodies = render_body(event.text)

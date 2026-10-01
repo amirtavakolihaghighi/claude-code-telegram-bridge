@@ -170,7 +170,8 @@ Type in a topic to continue that chat.
 | `/stop` | Cut short whatever is running here |
 | `/archive [md\|html\|both]` | Save the chat as files, then close the topic |
 | `/reopen` | Reopen a closed topic so it can continue |
-| `/usage [all]` | What your sessions have cost, by project and day |
+| `/cost` | What this chat and today have cost |
+| `/usage [all]` | The full breakdown, by project and day |
 | `/quota` | How much of your 5-hour and 7-day limits is used |
 | `/accounts` | Claude accounts and their remaining quota |
 | `/switch <n>` | Change which account Claude uses |
