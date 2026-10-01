@@ -138,6 +138,7 @@ class Runner:
             env["BRIDGE_QUESTION_URL"] = f"{base}/question"
             env["BRIDGE_APPROVAL_TOKEN"] = self.approval.token
             env["BRIDGE_SESSION_ID"] = session_id
+            env["BRIDGE_QUESTION_WAIT"] = str(self.approval.question_timeout)
         return env
 
     def _command(self, session_id: str | None, prompt: str) -> tuple[list[str], str]:

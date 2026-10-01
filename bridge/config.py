@@ -52,6 +52,7 @@ class Config:
     max_attach_mb: float = 20.0
     cswap_cli: Path | None = None
     show_emails: str = "mask"
+    question_timeout: float = 300.0
 
     @property
     def watches_everything(self) -> bool:
@@ -170,6 +171,11 @@ def load_config(require_token: bool = True) -> Config:
     from .accounts import find_cswap
     cswap_cli = find_cswap(os.getenv("CSWAP_CLI", "").strip())
 
+    try:
+        question_timeout = float(os.getenv("QUESTION_TIMEOUT", "300"))
+    except ValueError:
+        question_timeout = 300.0
+
     show_emails = (os.getenv("SHOW_EMAILS", "").strip().lower() or "mask")
     if show_emails not in ("mask", "full", "none"):
         raise SystemExit("SHOW_EMAILS must be mask, full or none")
@@ -192,4 +198,5 @@ def load_config(require_token: bool = True) -> Config:
         max_attach_mb=max_attach_mb,
         cswap_cli=cswap_cli,
         show_emails=show_emails,
+        question_timeout=question_timeout,
     )

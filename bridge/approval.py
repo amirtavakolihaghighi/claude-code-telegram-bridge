@@ -22,7 +22,9 @@ from .state import State
 log = logging.getLogger(__name__)
 
 DECISION_TIMEOUT = 300.0        # seconds to wait for a tap before refusing
-QUESTION_TIMEOUT = 900.0        # a question may sit unanswered for longer
+# Long enough that you can reach your phone, short enough that Claude is not
+# stuck doing nothing. On expiry it is told so and carries on.
+QUESTION_TIMEOUT = 300.0
 MAX_BODY = 1_000_000
 
 
@@ -80,7 +82,7 @@ class ApprovalService:
         # rather than part-way through something, so there is no harm in
         # waiting, and you may well be away from your phone.
         self.question_timeout = (question_timeout if question_timeout is not None
-                                 else max(timeout * 2, QUESTION_TIMEOUT))
+                                 else QUESTION_TIMEOUT)
         self.port = 0
         self.pending: dict[str, Pending] = {}
         self.questions: dict[str, Question] = {}
@@ -241,6 +243,8 @@ class ApprovalService:
                            allow_multiple, loop.create_future())
         self.questions[request_id] = pending
 
+        log.info("asking you: %s (%d options%s)", question[:60], len(options),
+                 ", several allowed" if allow_multiple else "")
         try:
             await self._question_hook(pending)
         except Exception:
@@ -249,9 +253,13 @@ class ApprovalService:
             return {"chosen": [], "reason": "the question could not be sent"}
 
         try:
-            return await asyncio.wait_for(pending.future,
-                                          timeout=self.question_timeout)
+            answer = await asyncio.wait_for(pending.future,
+                                           timeout=self.question_timeout)
+            log.info("you answered: %s", ", ".join(answer.get("chosen", [])))
+            return answer
         except asyncio.TimeoutError:
+            log.info("no answer after %.0fs; telling Claude to carry on",
+                     self.question_timeout)
             return {"chosen": [], "reason": "you did not answer in time"}
         finally:
             self.questions.pop(request_id, None)

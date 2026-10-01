@@ -111,7 +111,8 @@ async def run_live(args) -> int:
     state = State(config.state_db)
     echo = EchoGuard()
     # Permission questions only make sense if you can tap an answer.
-    approval = (ApprovalService(state, timeout=config.approval_timeout)
+    approval = (ApprovalService(state, timeout=config.approval_timeout,
+                                question_timeout=config.question_timeout)
                 if replies else None)
     runner = Runner(config, approval)
 

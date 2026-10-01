@@ -20,8 +20,20 @@ import sys
 import urllib.error
 import urllib.request
 
-REPLY_TIMEOUT = 900        # a question may sit unanswered for a while
 FALLBACK_PROTOCOL = "2024-11-05"
+
+
+def reply_timeout() -> float:
+    """Outlive the bridge's own wait by a margin.
+
+    If both sides gave up at the same moment they would race, and the caller
+    would see a bare connection timeout instead of the bridge's explanation that
+    nobody answered.
+    """
+    try:
+        return float(os.environ.get("BRIDGE_QUESTION_WAIT", "300")) + 60
+    except ValueError:
+        return 360.0
 
 TOOL = {
     "name": "ask_user",
@@ -100,7 +112,7 @@ def ask_the_bridge(arguments: dict) -> dict:
         url, data=payload, method="POST",
         headers={"Content-Type": "application/json", "X-Bridge-Token": token})
     try:
-        with urllib.request.urlopen(request, timeout=REPLY_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=reply_timeout()) as response:
             answer = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
         return text_result(f"Could not reach the user: {exc}", is_error=True)
