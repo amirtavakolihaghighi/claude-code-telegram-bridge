@@ -162,7 +162,13 @@ class ApprovalService:
             except OSError:
                 pass
         finally:
+            # Close politely: shutting the socket the instant after writing can
+            # reach the client as a reset instead of the response just sent.
             writer.close()
+            try:
+                await writer.wait_closed()
+            except (OSError, ConnectionError):
+                pass
 
     async def _read_request(self, reader: asyncio.StreamReader
                             ) -> tuple[str, dict] | None:

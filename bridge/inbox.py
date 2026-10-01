@@ -20,7 +20,7 @@ from io import BytesIO
 from telegram import (BotCommand, InlineKeyboardButton, InlineKeyboardMarkup,
                       InputFile, Update)
 from telegram.constants import ChatAction, ParseMode
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
@@ -271,6 +271,27 @@ class Inbox:
         except TelegramError:
             pass
 
+    async def _toast(self, query, text: str = "") -> None:
+        """Acknowledge a tap. Best effort: never let it break what follows."""
+        try:
+            await query.answer(text[:200], read_timeout=8, connect_timeout=5)
+        except TelegramError as exc:
+            log.info("could not acknowledge a tap: %s", exc)
+
+    async def _redraw(self, query, asked) -> bool:
+        """Redraw the keyboard, retrying once past a wobbly connection."""
+        for attempt in range(2):
+            try:
+                await query.edit_message_reply_markup(
+                    reply_markup=self._question_markup(asked))
+                return True
+            except BadRequest:
+                return False        # unchanged or gone; retrying cannot help
+            except TelegramError as exc:
+                log.info("redraw attempt %d failed: %s", attempt + 1, exc)
+                await asyncio.sleep(1)
+        return False
+
     async def _on_question_button(self, query, action: str, rest: str) -> None:
         request_id, _, raw_index = rest.partition("|")
         index = int(raw_index) if raw_index.isdigit() else 0
@@ -282,14 +303,13 @@ class Inbox:
 
         asked = approval.questions.get(request_id)
         if asked is None:
-            # Expired or already answered. Say so plainly and take the buttons
-            # away, so it stops looking like something that can be tapped.
-            await query.answer("That question has expired - Claude moved on.",
-                               show_alert=True)
+            # Expired or already answered. Take the buttons away first, so it
+            # stops looking like something that can be tapped.
             try:
                 await query.edit_message_reply_markup(reply_markup=None)
             except TelegramError:
                 pass
+            await self._toast(query, "That question expired - Claude moved on.")
             return
 
         # Multiple choice: tick in place and wait for the send button.
@@ -297,34 +317,38 @@ class Inbox:
             approval.toggle(request_id, index)
             ticked = index in asked.picked
             option = asked.options[index] if index < len(asked.options) else ""
-            await query.answer(f"{'Added' if ticked else 'Removed'}: {option}"[:200])
-            try:
-                await query.edit_message_reply_markup(
-                    reply_markup=self._question_markup(asked))
-            except TelegramError:
-                pass
+            # The tick is what you are waiting to see, so draw it first. A
+            # callback must be acknowledged within about fifteen seconds, and on
+            # a slow connection that call can fail - which used to take the
+            # redraw down with it and leave the buttons looking inert.
+            await self._redraw(query, asked)
+            await self._toast(query,
+                              f"{'Added' if ticked else 'Removed'}: {option}")
             return
 
         indexes = sorted(asked.picked) if action == QUESTION_DONE else [index]
         if not indexes:
-            await query.answer("Tap an option first, then Send.",
-                               show_alert=True)
+            await self._toast(query, "Tap an option first, then Send.")
             return
 
         answered = approval.answer(request_id, indexes)
         if answered is None:
-            await query.answer("Too late.")
+            await self._toast(query, "Too late - Claude moved on.")
             return
         chosen = [answered.options[i] for i in indexes
                   if 0 <= i < len(answered.options)]
-        await query.answer("Sent")
-        try:
-            await query.edit_message_text(
-                text=f"{query.message.text_html}\n\n{ALLOWED} <i>"
-                     f"{_esc(', '.join(chosen))}</i>",
-                parse_mode=ParseMode.HTML)
-        except TelegramError:
-            pass
+        # Claude already has the answer; this only shows what was sent. Telegram
+        # does not always attach the message, so do not assume it is there.
+        original = getattr(query.message, "text_html", None)
+        if original is not None:
+            try:
+                await query.edit_message_text(
+                    text=f"{original}\n\n{ALLOWED} <i>"
+                         f"{_esc(', '.join(chosen))}</i>",
+                    parse_mode=ParseMode.HTML)
+            except TelegramError as exc:
+                log.info("could not mark the question answered: %s", exc)
+        await self._toast(query, "Sent")
 
     async def on_button(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -970,6 +994,13 @@ def build_application(config: Config, state: State, runner: Runner,
     app.add_handler(CommandHandler("status", inbox.on_status))
     app.add_handler(CommandHandler("help", inbox.on_help))
     app.add_handler(CallbackQueryHandler(inbox.on_button))
+
+    async def on_error(update, context) -> None:
+        """Without this, a failed update prints a bare traceback and PTB warns
+        that nobody is listening."""
+        log.warning("handling an update failed: %s", context.error)
+
+    app.add_error_handler(on_error)
     if config.replies_enabled:
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
                                        inbox.on_text))

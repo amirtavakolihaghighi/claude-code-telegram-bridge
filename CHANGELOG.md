@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-01
+
+Making the new question buttons actually usable.
+
 ### Fixed
 
+- Tapping an option showed no tick. The tap was recorded, but the keyboard was
+  redrawn only after acknowledging the tap - and Telegram allows about fifteen
+  seconds for that, which a slow connection misses, so the redraw never ran. The
+  tick is now drawn first and the acknowledgement is best effort, with one retry
+  past a network wobble.
+- A tap with no message attached, which Telegram permits, raised instead of
+  being handled.
 - A question nobody answered was left looking live: taps did nothing visible and
   the selection seemed impossible to confirm. It is now struck through with its
   buttons removed when it expires, and tapping an expired one says so.
@@ -189,7 +200,8 @@ does rather than what changed.
 - Subagent output and Claude's thinking are not mirrored.
 - Tool input is truncated at 600 characters, output at 900.
 
-[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.0...v0.2.1

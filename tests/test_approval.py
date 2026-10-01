@@ -157,7 +157,8 @@ async def test_the_hook_can_ask_and_is_answered(tmp_path):
 
         assert (await asyncio.to_thread(post, service.token))["behavior"] == "allow"
 
-        with pytest.raises(urllib.error.HTTPError):
+        # Refused one way or another: a 400, or the socket closed on us.
+        with pytest.raises((urllib.error.URLError, OSError)):
             await asyncio.to_thread(post, "the-wrong-secret")
     finally:
         await service.stop()
