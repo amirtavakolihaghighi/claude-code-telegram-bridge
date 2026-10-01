@@ -7,17 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-01
+
+The bot stops being a one-thing-at-a-time bot, and stops talking about money
+unprompted.
+
 ### Added
 
-- /cost reports what this chat and today have cost, replacing the footer that
+- `/cost` reports what this chat and today have cost, replacing the footer that
   used to post itself.
 
 ### Removed
 
 - The "turn finished" cost footer. It appeared whenever a session's cost was
-  written - every time Claude exited and every time a VS Code window closed -
-  so a running total turned up in chats where nothing had happened. Ask with
-  /cost or /usage instead.
+  written — every time Claude exited and every time a VS Code window closed — so
+  a running total turned up in chats where nothing had happened. Ask with
+  `/cost` or `/usage` instead.
 
 ### Fixed
 
@@ -225,7 +230,8 @@ does rather than what changed.
 - Subagent output and Claude's thinking are not mirrored.
 - Tool input is truncated at 600 characters, output at 900.
 
-[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.1...v0.3.0
