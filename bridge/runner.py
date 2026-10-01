@@ -29,6 +29,19 @@ RUN_TIMEOUT = 3600.0        # seconds; a very long turn is still a finite one
 HOOK_TIMEOUT = 420          # seconds Claude Code waits for our permission hook
 RUNTIME_DIR = ROOT / "runtime"
 HOOK_SCRIPT = ROOT / "hooks" / "permission_hook.py"
+ASK_SCRIPT = ROOT / "hooks" / "ask_mcp.py"
+
+# The tool's own description carries the detail. This is here because a turn
+# driven from a phone has nobody at the keyboard, which Claude cannot otherwise
+# know.
+ASK_PROMPT = (
+    "You are answering from a Telegram chat, not a terminal. The user is on "
+    "their phone and cannot see your screen. When you need a decision from "
+    "them - a choice between approaches, confirmation of something "
+    "irreversible, or an ambiguous request clarified - call the ask_user tool "
+    "so they can answer by tapping a button. Asking in prose works too, but may "
+    "go unread for hours."
+)
 
 
 @dataclass(frozen=True)
@@ -100,11 +113,31 @@ class Runner:
         path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
         return path
 
-    def _environment(self) -> dict[str, str]:
+    def _mcp_config_file(self) -> Path | None:
+        """An MCP server giving Claude a way to ask you a question."""
+        if self.approval is None or not ASK_SCRIPT.exists():
+            return None
+        RUNTIME_DIR.mkdir(exist_ok=True)
+        path = RUNTIME_DIR / "ask-mcp.json"
+        config = {
+            "mcpServers": {
+                "telegram": {
+                    "command": sys.executable,
+                    "args": [str(ASK_SCRIPT)],
+                }
+            }
+        }
+        path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        return path
+
+    def _environment(self, session_id: str = "") -> dict[str, str]:
         env = dict(os.environ)
         if self.approval is not None and self.approval.port:
-            env["BRIDGE_APPROVAL_URL"] = f"http://127.0.0.1:{self.approval.port}/ask"
+            base = f"http://127.0.0.1:{self.approval.port}"
+            env["BRIDGE_APPROVAL_URL"] = f"{base}/ask"
+            env["BRIDGE_QUESTION_URL"] = f"{base}/question"
             env["BRIDGE_APPROVAL_TOKEN"] = self.approval.token
+            env["BRIDGE_SESSION_ID"] = session_id
         return env
 
     def _command(self, session_id: str | None, prompt: str) -> tuple[list[str], str]:
@@ -128,6 +161,11 @@ class Runner:
         else:
             # Nobody can answer, so refuse rather than hang.
             args += ["--permission-prompts", "none"]
+
+        mcp = self._mcp_config_file()
+        if mcp is not None:
+            args += ["--mcp-config", str(mcp),
+                     "--append-system-prompt", ASK_PROMPT]
 
         args += ["--resume", target] if session_id else ["--session-id", target]
         return args, target
@@ -153,7 +191,7 @@ class Runner:
                     cwd=str(project),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=self._environment(),
+                    env=self._environment(target),
                 )
             except OSError as exc:
                 return RunResult(False, target, f"could not start claude: {exc}")

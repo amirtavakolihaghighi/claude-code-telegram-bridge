@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-01
+
+Knowing what you are spending, and being asked instead of guessed at.
+
 ### Added
 
+- Claude can now ask you a question and wait for the answer. It arrives as
+  buttons to tap; questions where several answers apply tick instead, with a
+  confirm button. Unanswered after fifteen minutes, Claude is told so and
+  carries on rather than hanging. This works through a small MCP server in
+  `hooks/ask_mcp.py`, since Claude Code's own question tool does not exist
+  outside an interactive session.
+- `/help` is grouped by what you are trying to do, and lists every command.
 - `/usage` reports cost and tokens by project, by day and by chat, read straight
   from the chat files so it needs no extension installed. It states its own
   limits: token counts are exact, cost is per chat rather than per message, and
@@ -162,7 +173,8 @@ does rather than what changed.
 - Subagent output and Claude's thinking are not mirrored.
 - Tool input is truncated at 600 characters, output at 900.
 
-[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.1.0...v0.2.0

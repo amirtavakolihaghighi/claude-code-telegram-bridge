@@ -59,6 +59,9 @@ DENY = "d"
 ALLOW_ALL = "A"
 REMEMBER = "R"
 SEND_FILE = "f"
+QUESTION = "q"
+QUESTION_DONE = "Q"
+TICK = "✅"
 
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 CHART = "\U0001f4ca"
@@ -219,6 +222,81 @@ class Inbox:
             disable_web_page_preview=True,
         )
 
+    # -- questions Claude asks -------------------------------------------
+    def _question_markup(self, asked) -> InlineKeyboardMarkup:
+        rows = []
+        for index, option in enumerate(asked.options):
+            ticked = index in asked.picked
+            mark = f"{TICK} " if ticked else ""
+            rows.append([InlineKeyboardButton(
+                f"{mark}{option}"[:64],
+                callback_data=f"{QUESTION}|{asked.request_id}|{index}")])
+        if asked.allow_multiple:
+            count = len(asked.picked)
+            rows.append([InlineKeyboardButton(
+                f"{ALLOWED} Send {count} answer(s)" if count
+                else "Pick at least one",
+                callback_data=f"{QUESTION_DONE}|{asked.request_id}|0")])
+        return InlineKeyboardMarkup(rows)
+
+    async def send_question(self, asked) -> None:
+        """Post a question from Claude, with a button for each answer."""
+        if self.bot is None or self.config.group_id is None:
+            raise RuntimeError("not connected to Telegram yet")
+        thread_id, _ = self.state.get_topic(asked.session_id)
+        hint = ("\n<i>Tick any that apply, then send.</i>"
+                if asked.allow_multiple else "")
+        return await self.bot.send_message(
+            chat_id=self.config.group_id, message_thread_id=thread_id,
+            text=f"{ASK} <b>Claude is asking</b>\n\n{_esc(asked.question)}{hint}",
+            parse_mode=ParseMode.HTML, disable_notification=False,
+            reply_markup=self._question_markup(asked))
+
+    async def _on_question_button(self, query, action: str, rest: str) -> None:
+        request_id, _, raw_index = rest.partition("|")
+        index = int(raw_index) if raw_index.isdigit() else 0
+        approval = self.approval
+
+        if approval is None:
+            await query.answer()
+            return
+
+        asked = approval.questions.get(request_id)
+        if asked is None:
+            await query.answer("That question has already been answered.")
+            return
+
+        # Multiple choice: tick in place and wait for the confirm button.
+        if asked.allow_multiple and action == QUESTION:
+            approval.toggle(request_id, index)
+            await query.answer()
+            try:
+                await query.edit_message_reply_markup(
+                    reply_markup=self._question_markup(asked))
+            except TelegramError:
+                pass
+            return
+
+        indexes = sorted(asked.picked) if action == QUESTION_DONE else [index]
+        if not indexes:
+            await query.answer("Tick at least one first.", show_alert=True)
+            return
+
+        answered = approval.answer(request_id, indexes)
+        if answered is None:
+            await query.answer("Too late.")
+            return
+        chosen = [answered.options[i] for i in indexes
+                  if 0 <= i < len(answered.options)]
+        await query.answer("Sent")
+        try:
+            await query.edit_message_text(
+                text=f"{query.message.text_html}\n\n{ALLOWED} <i>"
+                     f"{_esc(', '.join(chosen))}</i>",
+                parse_mode=ParseMode.HTML)
+        except TelegramError:
+            pass
+
     async def on_button(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if query is None:
@@ -231,6 +309,10 @@ class Inbox:
             return
 
         action, _, request_id = query.data.partition("|")
+
+        if action in (QUESTION, QUESTION_DONE):
+            await self._on_question_button(query, action, request_id)
+            return
 
         if action == SEND_FILE:
             await query.answer("Sending...")
@@ -795,19 +877,34 @@ class Inbox:
         if not self._is_owner(update):
             return
         await self._reply(update, (
-            "<b>Commands</b>\n"
-            "Just type in a topic to continue that chat.\n\n"
-            "/new &lt;text&gt; - start a new chat in this project\n"
-            "/c &lt;text&gt; - send a message the long way\n"
-            "/stop - cut short whatever is running here\n"
-            "/archive - save this chat as a file, then close the topic\n"
-            "/reopen - reopen a closed topic\n"
-            "/projects - which projects are mirrored\n"
-            "/rules - things Claude may always do\n"
-            "/forget &lt;key|all&gt; - undo one of those\n"
-            "/vscode - link to open this chat in the editor\n"
-            "/status - what is going on right now\n"
-            "/help - this list"
+            "<b>Just type in a topic</b> to continue that chat.\n\n"
+
+            "<b>Chatting</b>\n"
+            "/new &lt;text&gt; — start a new chat in this project\n"
+            "/c &lt;text&gt; — send a message the long way round\n"
+            "/stop — cut short whatever is running here\n\n"
+
+            "<b>Files</b>\n"
+            "/file &lt;path&gt; — send me a file from this project\n"
+            "/archive [md|html|both] — save this chat, then close the topic\n"
+            "/reopen — reopen a closed topic\n\n"
+
+            "<b>Spending</b>\n"
+            "/usage [all] — what your chats have cost\n"
+            "/quota — how much of your rate limits is used\n"
+            "/accounts — accounts and their remaining quota\n"
+            "/switch &lt;n&gt; — change which account Claude uses\n\n"
+
+            "<b>Everything else</b>\n"
+            "/projects — which projects are mirrored\n"
+            "/rules — things Claude may always do\n"
+            "/forget &lt;key|all&gt; — undo one of those\n"
+            "/vscode — link to open this chat in the editor\n"
+            "/status — what is going on right now\n"
+            "/help — this list\n\n"
+
+            "<i>Claude can also ask you things directly — those arrive as "
+            "buttons to tap.</i>"
         ))
 
 
@@ -824,6 +921,7 @@ def build_application(config: Config, state: State, runner: Runner,
     app.bot_data["inbox"] = inbox
     if approval is not None:
         approval.set_notifier(inbox.send_approval)
+        approval.set_question_notifier(inbox.send_question)
 
     app.add_handler(CommandHandler("new", inbox.on_new))
     app.add_handler(CommandHandler("c", inbox.on_say))

@@ -207,6 +207,46 @@ command, but not `npm` or `rm`. `/rules` lists what you have agreed to;
 If you don't answer within five minutes it refuses on your behalf, so nothing
 hangs waiting.
 
+### When Claude needs to ask you something
+
+Claude Code's own question tool only exists in an interactive session, so a turn
+driven from Telegram has no way to ask you anything — it can only guess, or ask
+in prose you might not read for hours.
+
+The bridge gives it one. Claude can now ask directly, and the question arrives
+as buttons:
+
+```text
+❓ Claude is asking
+
+The migration can keep the old column or drop it. Which?
+
+[ Keep it, safer                 ]
+[ Drop it, cleaner               ]
+[ Stop and let me look           ]
+```
+
+Tap one and Claude carries on with your answer. For questions where several
+answers apply, the buttons tick instead, and a confirm button sends them
+together:
+
+```text
+Tick any that apply, then send.
+
+[ ✅ Tests      ]
+[ Docs          ]
+[ ✅ CI         ]
+[ ✅ Send 2 answer(s) ]
+```
+
+If you do not answer within fifteen minutes, Claude is told so and carries on
+without you rather than hanging.
+
+This works through a small MCP server in `hooks/ask_mcp.py` — a standard way for
+a tool to be offered to Claude. Claude Code starts it, sees a tool called
+`ask_user`, and calling it reaches the bridge over the same loopback connection
+the permission buttons use.
+
 ### Cost, quota and accounts
 
 `/usage` reads the chat files directly, so it needs nothing installed and keeps

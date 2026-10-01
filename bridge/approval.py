@@ -22,6 +22,7 @@ from .state import State
 log = logging.getLogger(__name__)
 
 DECISION_TIMEOUT = 300.0        # seconds to wait for a tap before refusing
+QUESTION_TIMEOUT = 900.0        # a question may sit unanswered for longer
 MAX_BODY = 1_000_000
 
 
@@ -56,21 +57,45 @@ class Pending:
         return rule_key(self.tool_name, self.tool_input)
 
 
+@dataclass
+class Question:
+    """A question Claude asked, waiting for a tap."""
+    request_id: str
+    session_id: str
+    question: str
+    options: list[str]
+    allow_multiple: bool
+    future: asyncio.Future = field(repr=False)
+    picked: set[int] = field(default_factory=set)
+
+
 class ApprovalService:
     def __init__(self, state: State | None = None,
-                 timeout: float = DECISION_TIMEOUT):
+                 timeout: float = DECISION_TIMEOUT,
+                 question_timeout: float | None = None):
         self.state = state
         self.token = secrets.token_urlsafe(24)
         self.timeout = timeout
+        # A question waits longer than a permission prompt: Claude is idle
+        # rather than part-way through something, so there is no harm in
+        # waiting, and you may well be away from your phone.
+        self.question_timeout = (question_timeout if question_timeout is not None
+                                 else max(timeout * 2, QUESTION_TIMEOUT))
         self.port = 0
         self.pending: dict[str, Pending] = {}
+        self.questions: dict[str, Question] = {}
         self.always_allow: set[str] = set()
         self._server: asyncio.Server | None = None
         self._ask_hook = None       # set by whoever can post to Telegram
+        self._question_hook = None
 
     def set_notifier(self, callback) -> None:
         """callback(pending) -> awaitable; posts the buttons."""
         self._ask_hook = callback
+
+    def set_question_notifier(self, callback) -> None:
+        """callback(question) -> awaitable; posts the choices."""
+        self._question_hook = callback
 
     # -- server ----------------------------------------------------------
     async def start(self) -> None:
@@ -88,14 +113,31 @@ class ApprovalService:
                 pending.future.set_result({"behavior": "deny",
                                            "message": "the bridge shut down"})
         self.pending.clear()
+        for asked in list(self.questions.values()):
+            if not asked.future.done():
+                asked.future.set_result({"chosen": [],
+                                         "reason": "the bridge shut down"})
+        self.questions.clear()
 
     async def _handle(self, reader: asyncio.StreamReader,
                       writer: asyncio.StreamWriter) -> None:
         try:
-            payload = await self._read_request(reader)
-            if payload is None:
+            request = await self._read_request(reader)
+            if request is None:
                 await self._respond(writer, 400, {"error": "bad request"})
                 return
+            path, payload = request
+
+            if path.startswith("/question"):
+                answer = await self.ask_question(
+                    session_id=str(payload.get("session_id", "")),
+                    question=str(payload.get("question", "")),
+                    options=[str(o) for o in payload.get("options") or []],
+                    allow_multiple=bool(payload.get("allow_multiple")),
+                )
+                await self._respond(writer, 200, answer)
+                return
+
             decision = await self.ask(
                 session_id=str(payload.get("session_id", "")),
                 tool_name=str(payload.get("tool_name", "a tool")),
@@ -112,9 +154,11 @@ class ApprovalService:
         finally:
             writer.close()
 
-    async def _read_request(self, reader: asyncio.StreamReader) -> dict | None:
+    async def _read_request(self, reader: asyncio.StreamReader
+                            ) -> tuple[str, dict] | None:
         header_blob = await reader.readuntil(b"\r\n\r\n")
         lines = header_blob.decode("latin-1").split("\r\n")
+        path = lines[0].split(" ")[1] if " " in lines[0] else "/"
         headers = {}
         for line in lines[1:]:
             if ":" in line:
@@ -130,7 +174,7 @@ class ApprovalService:
             return None
         body = await reader.readexactly(length)
         try:
-            return json.loads(body.decode("utf-8"))
+            return path, json.loads(body.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             return None
 
@@ -181,6 +225,58 @@ class ApprovalService:
                     "message": f"no answer within {minutes} minutes"}
         finally:
             self.pending.pop(request_id, None)
+
+    # -- questions Claude asks --------------------------------------------
+    async def ask_question(self, session_id: str, question: str,
+                           options: list[str], allow_multiple: bool) -> dict:
+        options = [o for o in options if o.strip()][:10]
+        if not question.strip() or len(options) < 2:
+            return {"chosen": [], "reason": "the question was incomplete"}
+        if self._question_hook is None:
+            return {"chosen": [], "reason": "no way to reach you on Telegram"}
+
+        request_id = secrets.token_hex(4)
+        loop = asyncio.get_running_loop()
+        pending = Question(request_id, session_id, question.strip(), options,
+                           allow_multiple, loop.create_future())
+        self.questions[request_id] = pending
+
+        try:
+            await self._question_hook(pending)
+        except Exception:
+            log.exception("could not post the question")
+            self.questions.pop(request_id, None)
+            return {"chosen": [], "reason": "the question could not be sent"}
+
+        try:
+            return await asyncio.wait_for(pending.future,
+                                          timeout=self.question_timeout)
+        except asyncio.TimeoutError:
+            return {"chosen": [], "reason": "you did not answer in time"}
+        finally:
+            self.questions.pop(request_id, None)
+
+    def toggle(self, request_id: str, index: int) -> Question | None:
+        """Tick or untick one option of a multiple-choice question."""
+        pending = self.questions.get(request_id)
+        if pending is None or pending.future.done():
+            return None
+        if index in pending.picked:
+            pending.picked.discard(index)
+        else:
+            pending.picked.add(index)
+        return pending
+
+    def answer(self, request_id: str, indexes: list[int]) -> Question | None:
+        pending = self.questions.get(request_id)
+        if pending is None or pending.future.done():
+            return None
+        chosen = [pending.options[i] for i in sorted(indexes)
+                  if 0 <= i < len(pending.options)]
+        if not chosen:
+            return None
+        pending.future.set_result({"chosen": chosen})
+        return pending
 
     def resolve(self, request_id: str, allow: bool, always: bool = False,
                 remember: bool = False) -> bool:
