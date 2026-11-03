@@ -318,6 +318,17 @@ def render(event: Event) -> list[OutMessage]:
                            "carried on from a summary of everything before "
                            "this point.</i>", silent=True)]
 
+    if event.kind == "notice":
+        # Claude Code's own word about the conversation - most often that a
+        # reply was stopped. Shown, so the gap it leaves is explained, but
+        # silent: it is not someone talking to you.
+        bodies = render_body(event.text)
+        if not bodies:
+            return []
+        head = OutMessage(f"{ERROR_ICON} <b>Notice</b>\n\n{bodies[0]}",
+                          silent=True)
+        return [head] + [OutMessage(b, silent=True) for b in bodies[1:]]
+
     if event.kind == "turn_end":
         # Deliberately silent. This fired whenever a session's cost was written -
         # every time Claude exited or a VS Code window closed - which meant a

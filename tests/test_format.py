@@ -187,6 +187,19 @@ def test_a_compacted_conversation_is_one_short_marker():
     assert message.silent is True
 
 
+def test_a_notice_is_shown_but_does_not_notify():
+    [message] = render(Event("notice", "s1",
+                             text="Claude's reply was stopped."))
+
+    assert "Notice" in message.html
+    assert "Claude's reply was stopped." in message.html
+    assert message.silent is True
+
+
+def test_an_empty_notice_posts_nothing():
+    assert render(Event("notice", "s1", text="   ")) == []
+
+
 def test_a_result_that_came_later_says_so():
     from bridge.events import Event
     late = Event("tool", "s1", text="long research", tool_name="Agent",

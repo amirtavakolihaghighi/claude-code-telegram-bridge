@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A reply that was stopped, and the other notices Claude Code writes into a
+  conversation, are posted as **Notice**. Without them the topic ran straight
+  from your message to the next one, with nothing to say a reply had been
+  written and withheld.
+- A file you attach to a message shows as `[file: its name]`, as a pasted
+  picture already showed as `[image]`. Its contents are not uploaded.
+
 ### Fixed
 
 - The short notes Claude writes between steps — "I'm checking the log next" —

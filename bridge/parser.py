@@ -37,6 +37,12 @@ OUTPUT_LIMIT = 900
 # as it once was, showed them as having no result and then lost the real one.
 PENDING_TIMEOUT = 1800.0
 NO_RESULT = "(no result recorded)"
+# Notices Claude Code writes into the conversation itself, as against the
+# plumbing it also records. Without these, a reply that was stopped leaves no
+# trace at all: the chat appears to skip from your message to the next one.
+NOTICE_SUBTYPES = ("informational", "model_refusal_fallback",
+                   "model_refusal_no_fallback")
+STOPPED_NOTICE = "Claude's reply was stopped, so it is not in this chat."
 # How a compacted conversation's summary begins, in versions that do not flag it.
 COMPACTED_PREFIX = "This session is being continued from a previous conversation"
 
@@ -217,6 +223,25 @@ def parse_record(record: dict) -> list[Event]:
             if text and not _is_noise(text):
                 return [Event("user", session_id, text=text, uuid=uuid,
                               timestamp=timestamp, extra={"mid_turn": True})]
+        # A file you attached. Its contents went to Claude, not to Telegram;
+        # say it was there, as a pasted picture does.
+        if isinstance(attached, dict) and attached.get("type") == "file":
+            name = _filename(attached.get("filename")
+                             or attached.get("displayPath") or "")
+            if name:
+                return [Event("user", session_id, text=f"[file: {name}]",
+                              uuid=uuid, timestamp=timestamp)]
+        return []
+
+    if kind == "system":
+        # Hook summaries and connection retries are plumbing and stay out.
+        if record.get("subtype") in NOTICE_SUBTYPES:
+            content = record.get("content")
+            text = (_prompt_text(content) if isinstance(content, list)
+                    else _clean(str(content or "")))
+            text = text or _clean(str(record.get("apiRefusalExplanation") or ""))
+            return [Event("notice", session_id, text=text or STOPPED_NOTICE,
+                          uuid=uuid, timestamp=timestamp)]
         return []
 
     if kind not in ("user", "assistant") or record.get("isMeta"):

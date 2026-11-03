@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class Event:
     kind: str           # title | user | assistant | tool | turn_end
+                        # | compacted | notice
     session_id: str
     text: str = ""
     tool_name: str = ""

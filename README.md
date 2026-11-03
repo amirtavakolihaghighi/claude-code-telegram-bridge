@@ -657,15 +657,20 @@ Read [SECURITY.md](SECURITY.md) before running this. In short:
 ## Known limits
 
 - The bot knows a *project* is open in VS Code, but not which *chat*.
-- Subagent chatter and Claude Code's own notices (API retries, hook summaries)
-  are not mirrored. Too noisy.
+- Subagent chatter and Claude Code's plumbing (connection retries, hook
+  summaries) are not mirrored. Too noisy, and a retry that succeeded says
+  nothing. Its notices about the conversation itself *are* mirrored, marked
+  **Notice** — above all when a reply was stopped, which would otherwise leave
+  the chat skipping straight to the next message.
 - Claude's reasoning is not mirrored, because it is not written to the chat
   file: only a signature is kept. The short notes Claude writes between steps
   are written down, and are mirrored, as VS Code shows them.
 - A compacted conversation shows as a one-line marker, as VS Code shows it,
   not as the summary Claude Code records in your name.
-- A picture you paste into a chat shows as `[image]`; the picture itself is not
-  uploaded.
+- A picture you paste into a chat shows as `[image]`, and a file you attach to
+  a message as `[file: its name]`. Neither is uploaded to Telegram.
+- Tool input longer than 600 characters, and output longer than 900, are cut
+  off with a note of how many lines were left out.
 - Tool input is capped at 600 characters, output at 900, to keep messages short.
 - Telegram's rate limit makes catching up on a lot of history slow.
 - A bridge that is killed in the instant between posting a message and saving

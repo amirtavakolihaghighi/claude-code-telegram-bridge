@@ -72,6 +72,61 @@ def test_a_note_written_between_steps_is_mirrored(chat_file):
         ("assistant", "I'm checking the log next.")]
 
 
+def system_record(subtype, uuid="s0", **fields):
+    return {"type": "system", "subtype": subtype, "uuid": uuid,
+            "isSidechain": False, "isMeta": True, **fields}
+
+
+def test_a_reply_that_was_stopped_says_so(chat_file):
+    """Otherwise the chat skips from your message to the next one, with no
+    sign that a reply was ever written."""
+    path = chat_file(r"C:\Code\app", "s1", [system_record(
+        "informational",
+        content="Claude's safeguards stopped the response above")])
+
+    events = read_all(path)
+
+    assert [(e.kind, e.text) for e in events] == [
+        ("notice", "Claude's safeguards stopped the response above")]
+
+
+def test_a_refusal_with_nothing_written_still_says_a_reply_was_stopped(chat_file):
+    """One such record carried no text of its own."""
+    from bridge.parser import STOPPED_NOTICE
+    path = chat_file(r"C:\Code\app", "s1",
+                     [system_record("model_refusal_no_fallback", content="")])
+
+    [event] = read_all(path)
+
+    assert event.kind == "notice"
+    assert event.text == STOPPED_NOTICE
+
+
+def test_claude_codes_plumbing_is_not_mirrored(chat_file):
+    """Hook summaries and connection retries, 715 of them here, are noise."""
+    path = chat_file(r"C:\Code\app", "s1", [
+        system_record("stop_hook_summary", uuid="s1", hookCount=2),
+        system_record("api_error", uuid="s2", level="error",
+                      error={"message": "Connection error."}, retryAttempt=1),
+    ])
+    assert read_all(path) == []
+
+
+def test_a_file_you_attached_is_named(chat_file):
+    """Its contents go to Claude, not to Telegram, but the chat must show
+    that something came with the message."""
+    path = chat_file(r"C:\Code\app", "s1", [
+        {"type": "attachment", "uuid": "f1", "isSidechain": False,
+         "attachment": {"type": "file", "filename": "resume.docx",
+                        "displayPath": r"C:\Docs\resume.docx",
+                        "content": "...the whole file..."}}])
+
+    events = read_all(path)
+
+    assert [(e.kind, e.text) for e in events] == [("user", "[file: resume.docx]")]
+    assert "the whole file" not in events[0].text
+
+
 def test_the_end_of_turn_cost_is_kept(chat_file):
     path = chat_file(r"C:\Code\app", "s1", [cost_state(1.25)])
     events = read_all(path)
