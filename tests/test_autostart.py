@@ -108,6 +108,46 @@ def test_the_menu_says_how_to_start_one_that_is_not_running(
     assert "choose 5" in brief_for(monkeypatch, tmp_path, capsys, 5)
 
 
+# -- sending missed history ----------------------------------------------------
+def catching_up(monkeypatch, tmp_path, answer, argv=("autostart", "catch-up")):
+    """Run catch-up against a throwaway database, answering its question."""
+    from bridge import catchup
+    state = State(tmp_path / "state.db")
+    monkeypatch.setattr(autostart, "_state", lambda: (object(), state))
+    monkeypatch.setattr(catchup, "find_missing", lambda *_: ["a chat"])
+    monkeypatch.setattr(catchup, "describe", lambda _m: "1 chat(s) to post")
+    running(monkeypatch, False)
+    monkeypatch.setattr(autostart.sys, "argv", list(argv))
+
+    def ask(_prompt):
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    monkeypatch.setattr("builtins.input", ask)
+    autostart.catch_up()
+    return State(tmp_path / "state.db").catch_up_requested()
+
+
+def test_catching_up_asks_first_and_does_nothing_on_no(
+        monkeypatch, tmp_path, capsys):
+    assert catching_up(monkeypatch, tmp_path, "n") is False
+    assert "Nothing changed" in capsys.readouterr().out
+
+
+def test_catching_up_does_nothing_when_there_is_no_one_to_answer(
+        monkeypatch, tmp_path):
+    assert catching_up(monkeypatch, tmp_path, EOFError()) is False
+
+
+def test_catching_up_starts_on_a_yes(monkeypatch, tmp_path):
+    assert catching_up(monkeypatch, tmp_path, "y") is True
+
+
+def test_catching_up_can_be_told_not_to_ask(monkeypatch, tmp_path):
+    assert catching_up(monkeypatch, tmp_path, EOFError(),
+                       argv=("autostart", "catch-up", "--yes")) is True
+
+
 def test_amounts_are_given_in_units_that_read_well():
     assert autostart._amount(400) == "1 KB"
     assert autostart._amount(12_345) == "12 KB"

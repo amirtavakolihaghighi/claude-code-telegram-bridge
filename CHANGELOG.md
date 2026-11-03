@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Every item VS Code shows in the chat is now its own message in Telegram: a
+  line of Claude's text, a note between steps, a tool call with its input and
+  result, a message you typed. Before, the queue glued up to eight neighbours
+  into one post to save on the rate limit, so a topic read as long slabs
+  rather than as the chat. The cost is time: a lot of history takes about four
+  times as long to send, and a busy turn can fall behind the limit of roughly
+  20 messages a minute, then catch up.
+- Sending missed history (`bridge.bat` option 10, or `catch-up`) now shows what
+  it will send, including any topic it will delete, and asks `[y/N]` first, as
+  `/resend` already did. Anything but a yes, or no terminal to answer on, sends
+  nothing; `--yes` skips the question.
+
 ### Added
 
 - A reply that was stopped, and the other notices Claude Code writes into a

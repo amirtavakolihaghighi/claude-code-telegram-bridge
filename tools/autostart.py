@@ -6,6 +6,7 @@ r"""Keep the bridge running without a terminal window open.
     python -m tools.autostart stop        stop it now
     python -m tools.autostart uninstall   remove it
     python -m tools.autostart catch-up    send everything never sent, in order
+                                          (asks first; --yes skips the question)
 
 This registers a Windows Scheduled Task that runs at sign-in and keeps going on
 battery - which matters on a laptop.
@@ -315,6 +316,18 @@ def is_running() -> int:
     return 0 if up else 1
 
 
+def _agreed() -> bool:
+    """Ask before doing something that cannot be undone. Anything but a yes,
+    including no terminal to answer on, is a no. --yes skips the question."""
+    if "--yes" in sys.argv[2:]:
+        return True
+    try:
+        answer = input("\nGo ahead? [y/N] ")
+    except EOFError:
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
 def catch_up() -> int:
     """Have the bridge send everything that never reached Telegram."""
     from bridge.catchup import describe, find_missing
@@ -333,6 +346,11 @@ def catch_up() -> int:
     print("To send: " + describe(missing))
     if not missing:
         state.close()
+        return 0
+    # The line above can say that topics are deleted, and that is final.
+    if not _agreed():
+        state.close()
+        print("Nothing changed.")
         return 0
     state.request_catch_up()
     state.close()
