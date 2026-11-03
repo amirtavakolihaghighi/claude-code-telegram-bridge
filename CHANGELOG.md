@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-03
+
 The bridge stops losing messages when it has been off, and stops being off
 without anyone knowing.
 
@@ -337,7 +339,8 @@ does rather than what changed.
 - Subagent output and Claude's thinking are not mirrored.
 - Tool input is truncated at 600 characters, output at 900.
 
-[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.3.0...v0.4.0
