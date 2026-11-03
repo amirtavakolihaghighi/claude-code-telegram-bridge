@@ -135,7 +135,7 @@ def test_token_counts_are_written_for_humans():
 
 # -- accounts -----------------------------------------------------------------
 def test_an_address_is_hidden_by_default():
-    assert mask_email("amirtavakoli@yahoo.com") == "a***@yahoo.com"
+    assert mask_email("someone@example.com") == "s***@example.com"
 
 
 def test_an_address_can_be_shown_or_withheld_entirely():
