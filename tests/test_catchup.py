@@ -116,3 +116,16 @@ def test_the_summary_counts_both_kinds(config, state, chat_file):
     assert "2 chat(s)" in line
     assert "1 never sent" in line
     assert "1 missing their beginning" in line
+
+
+def test_the_summary_warns_that_an_old_topic_is_deleted(config, state, chat_file):
+    """It said the old topic was kept, closed - just before it was deleted."""
+    seen = chat_file(r"C:\Code\app", "s1", [user_text("hello")])
+    state.set_offset("s1", seen, seen.stat().st_size, mirrored_from=40)
+    state.set_topic("s1", 7, "app: chat", r"C:\Code\app")
+    state.count_post("s1")
+
+    line = describe(find_missing(config, state))
+
+    assert "that topic is deleted, with everything in it" in line
+    assert "not deleted" not in line

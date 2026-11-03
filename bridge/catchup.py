@@ -10,8 +10,8 @@ Two kinds of chat have history that was never posted:
 
 Catching up sends both, oldest message first. Telegram cannot put messages
 above ones already posted, so a chat whose topic already holds its later part
-is given a fresh topic with the whole conversation in order; the old topic is
-renamed and closed, never deleted.
+is given a fresh topic with the whole conversation in order. The old topic is
+deleted, or closed and labelled if the bot may not delete it.
 """
 from __future__ import annotations
 
@@ -85,12 +85,16 @@ def describe(missing: list[Missing]) -> str:
         parts.append(f"{partial} missing their beginning")
     line = (f"{len(missing)} chat(s) to post, {total / 1e6:.1f} MB of chat "
             "files: " + ", ".join(parts) + ".")
+    # This is the only warning before topics are deleted, so it must say so.
     if renewed == 1:
-        line += (" 1 has a topic that began part-way; it gets a fresh topic "
-                 "with the whole chat in order, and the old one is closed, "
-                 "not deleted.")
+        line += (" 1 has a topic that began part-way: that topic is deleted, "
+                 "with everything in it, and the whole chat is sent again "
+                 "into a new one, in order.")
     elif renewed:
-        line += (f" {renewed} have topics that began part-way; each gets a "
-                 "fresh topic with the whole chat in order, and the old ones "
-                 "are closed, not deleted.")
+        line += (f" {renewed} have topics that began part-way: each is "
+                 "deleted, with everything in it, and its whole chat is sent "
+                 "again into a new one, in order.")
+    if renewed:
+        line += (" If the bot may not delete topics, an old one is closed "
+                 "and labelled (partial copy) instead.")
     return line
