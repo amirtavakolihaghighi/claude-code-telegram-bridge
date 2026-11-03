@@ -14,6 +14,7 @@ changes, so the answer is cached.
 """
 from __future__ import annotations
 
+import glob
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -135,6 +136,7 @@ class SessionFile:
     path: Path
     session_id: str
     project: Path
+    backup: bool = False        # read from a copy; Claude Code deleted its own
 
     @property
     def mtime(self) -> float:
@@ -144,31 +146,64 @@ class SessionFile:
             return 0.0
 
 
+def backup_roots(patterns: tuple[str, ...] | list[str]) -> list[Path]:
+    """The folders that CHAT_BACKUPS names. Wildcards are allowed, since a
+    backup folder is often renamed with each new copy."""
+    roots: list[Path] = []
+    for pattern in patterns:
+        roots += sorted(Path(match) for match in glob.glob(pattern)
+                        if Path(match).is_dir())
+    return roots
+
+
+def _size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return -1
+
+
+def _better(new: SessionFile, old: SessionFile) -> bool:
+    """Which of two files holding the same chat to read."""
+    if new.backup != old.backup:
+        return old.backup               # Claude Code's own beats any copy
+    if new.backup:
+        return _size(new.path) > _size(old.path)    # the most complete copy
+    return new.mtime > old.mtime        # two live ones: the one being written
+
+
 def find_session_files(claude_home: Path,
-                       projects: tuple[Path, ...] | list[Path] | None
+                       projects: tuple[Path, ...] | list[Path] | None,
+                       backups: tuple[str, ...] | list[str] = ()
                        ) -> list[SessionFile]:
     """Chat files for the given projects, oldest-touched first.
 
     An empty or None `projects` means every project Claude Code knows about.
+
+    `backups` adds copies of the projects folder. A chat still in Claude
+    Code's own folder is always read from there; a copy is only used for one
+    it has deleted, and then the largest, since a copy is only ever the start
+    of the chat it was taken from.
     """
-    root = claude_home / "projects"
-    if not root.is_dir():
-        return []
-
     wanted = {normalise(p) for p in projects} if projects else None
-    found: list[SessionFile] = []
+    found: dict[str, SessionFile] = {}
 
-    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
-        cwd = _cwd_of(folder)
-        if cwd is None:
+    for index, root in enumerate([claude_home / "projects", *backup_roots(backups)]):
+        if not root.is_dir():
             continue
-        key = normalise(cwd)
-        if wanted is not None and key not in wanted:
-            continue
-        project = Path(cwd)
-        for jsonl in folder.glob("*.jsonl"):
-            found.append(SessionFile(path=jsonl, session_id=jsonl.stem,
-                                     project=project))
+        for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+            cwd = _cwd_of(folder)
+            if cwd is None:
+                continue
+            key = normalise(cwd)
+            if wanted is not None and key not in wanted:
+                continue
+            project = Path(cwd)
+            for jsonl in folder.glob("*.jsonl"):
+                candidate = SessionFile(path=jsonl, session_id=jsonl.stem,
+                                        project=project, backup=index > 0)
+                current = found.get(jsonl.stem)
+                if current is None or _better(candidate, current):
+                    found[jsonl.stem] = candidate
 
-    found.sort(key=lambda s: s.mtime)
-    return found
+    return sorted(found.values(), key=lambda s: s.mtime)

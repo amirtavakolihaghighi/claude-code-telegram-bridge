@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The bridge stops losing messages when it has been off, and stops being off
+without anyone knowing.
+
+### Added
+
+- **Catching up**: option 10 in `bridge.bat`, or `--catch-up`, sends every
+  message that never reached Telegram, oldest first. That covers chats followed
+  "from now", whose earlier history was never sent, and chats never followed at
+  all — every chat, on a machine just set up. It runs in the background, and
+  can be stopped and resumed.
+- A chat whose topic already holds its later messages, but is missing its
+  beginning, is sent again whole. Telegram cannot put messages above ones
+  already posted, so its topic is deleted just before the first message goes
+  out again, and everything goes into a new one, in order. A topic you had
+  archived is archived again once it is complete. Without the *Delete
+  messages* right, the old topic is closed and labelled `(partial copy)`
+  instead.
+- `CHAT_BACKUPS` names folders holding copies of `~/.claude/projects`, with
+  wildcards for a folder renamed at each backup. A chat Claude Code has
+  deleted is read from its most complete copy, so it can still be caught up
+  on, sent again in full, or archived.
+- `/resend`, in a topic, deletes it and sends the whole chat again, in order,
+  after asking. For a topic that does not match its chat.
+- `/mute` stops a chat being sent to Telegram without skipping anything;
+  `/unmute` sends everything written meanwhile, in order. A message typed in a
+  muted topic is not run.
+- `TOPIC_ICONS=default` gives every topic Telegram's own icon instead of its
+  project's. Changing the setting restyles every existing topic at the next
+  start.
+- If two copies of the bot run at once — one bot shared by two computers, both
+  switched on — each says so, in the log and in the group's General topic.
+- A message typed in a topic that belongs to another computer says so, instead
+  of suggesting `/new`.
+- `state.db` records where mirroring of each chat began, so history that is
+  skipped can always be sent later.
+- The status, and the line at the top of the `bridge.bat` menu, come from the
+  bridge itself: whether it is running, when it last did anything, what is
+  still to send and what was never sent. A copy that runs but does nothing is
+  reported as such, where Task Scheduler says "Running".
+- Only one copy can run at a time. A second one refuses to start and names the
+  process already running. "Run here" offers to stop the background copy.
+
+### Fixed
+
+- After a restart, the bridge often did not start at sign-in, and stayed off
+  until someone noticed. If Telegram was unreachable as it started — usual at
+  sign-in, before the network is up — it exited before logging a word,
+  and Task Scheduler does not restart a program that started and then failed.
+  It now waits for Telegram. After any unexpected error it logs it and starts
+  again by itself.
+- A chat begun while the bridge was off was taken for old history when it came
+  back, and only followed from that moment. Its topic then started part-way
+  through the conversation. The bridge now records when it was last running,
+  and sends such chats from their first message.
+- Messages were dropped after eight failed attempts, about four minutes, when
+  Telegram could not be reached. They are now held until it can be.
+- Messages queued but not yet posted were lost when the bridge stopped,
+  restarted or shut down with the PC, because read positions were saved when a
+  message was queued rather than when it was posted. Positions now wait for the
+  post, so the rest goes out next time.
+- One unexpected error while posting ended the sending loop for good, and
+  everything after it was silently never sent.
+- Start failed with "cannot find the file specified" after an uninstall. It now
+  installs the task.
+- `--restyle-topics` skipped any topic that hit Telegram's flood limit, instead
+  of waiting and trying it again.
+- A reply containing a wide table could come out longer than Telegram allows,
+  and was refused, so it never appeared. Lining up the columns had padded every
+  line to the widest cell, hundreds of characters long. Every message is now
+  measured the way Telegram counts it, in UTF-16 units of what is shown, and
+  split again if it is over; merged posts are counted the same way.
+- A message containing U+2028 or U+2029, which JSON may carry unescaped, split
+  its record in two and was dropped.
+- A chat file that briefly vanished, or moved with its project, had its read
+  position reset to the start. Had it reappeared, the whole chat would have
+  been posted again.
+
+Topics now hold what VS Code shows. Several things went missing or came out
+wrong, even when nothing else did:
+
+- A message typed while Claude was working, and taken into the turn already
+  under way, never reached Telegram. It is not an ordinary user record.
+- A tool that took more than two minutes was shown as "(no result recorded)",
+  and its real result was then thrown away. Results are now waited for
+  much longer, and one that still comes late is posted, not dropped.
+- A tool call that never got a result was shown at the end of the chat, after
+  everything that followed it, or not at all. It now appears in its place,
+  just before the next message you typed.
+- The summary Claude Code writes when it compacts a conversation — tens of
+  thousands of characters — was posted as a message from you. It is now a
+  one-line marker, as in VS Code.
+- A pasted picture disappeared without a trace. It now shows as `[image]`.
+
+### Changed
+
+- A long backlog is read a slice at a time, only while the send queue has room,
+  so a big catch-up never holds up a live reply for more than a minute or two.
+  The chats used most recently get that room first.
+- `--once` keeps going until every chat has been read to its end.
+- A table too wide for a phone screen shows as a short list per row, instead
+  of a monospace block that has to be scrolled sideways.
+- A chat file that has become shorter than what was already read is left
+  alone, rather than read again from the top: it is most likely an older copy
+  from a backup, and starting over posted the whole chat twice.
+- Trouble fetching messages is logged as one line every few minutes, instead
+  of a full traceback on every retry, which buried everything else in the log.
+
 ## [0.5.0] - 2026-10-01
 
 The bot stops being a one-thing-at-a-time bot, and stops talking about money

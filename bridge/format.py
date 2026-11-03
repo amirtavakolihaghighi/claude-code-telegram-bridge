@@ -13,6 +13,13 @@ from .events import Event
 from .parser import tool_icon
 
 CHUNK_LIMIT = 3500
+# Telegram takes 4096 characters as shown - tags gone, entities decoded,
+# counted in UTF-16 units. A little is left for the header on a first part.
+VISIBLE_LIMIT = 4000
+# Wider than this, a table in a monospace block runs off a phone screen and
+# must be scrolled sideways, so it is shown as a list instead.
+TABLE_WIDTH = 60
+_TAG = re.compile(r"<[^>]+>")
 _LANG_TAG = re.compile(r"^[A-Za-z0-9_+.-]{0,15}\n")
 
 # Telegram accepts a short list of tags and nothing else: no headings, no
@@ -38,6 +45,7 @@ USER_ICON = "\U0001f464"
 CLAUDE_ICON = "\U0001f916"
 ERROR_ICON = "⚠️"
 DONE_ICON = "✅"
+COMPACTED_ICON = "\U0001f5dc️"
 ARROW = "↳"
 
 
@@ -52,6 +60,12 @@ class OutMessage:
 
 def _escape(text: str) -> str:
     return html.escape(text, quote=False)
+
+
+def visible_length(html_text: str) -> int:
+    """The length Telegram holds a message to: what is shown, in UTF-16 units."""
+    shown = html.unescape(_TAG.sub("", html_text))
+    return len(shown.encode("utf-16-le")) // 2
 
 
 def _inline(text: str) -> str:
@@ -94,9 +108,28 @@ def _cells(row: str) -> list[str]:
     return [cell.strip() for cell in row.strip().strip("|").split("|")]
 
 
+def _table_as_list(header: list[str], body: list[list[str]], width: int) -> str:
+    """Each row as a short block: its first cell in bold, then every other
+    cell under its column's name."""
+    labels = header + [""] * (width - len(header))
+    blocks = []
+    for row in body:
+        cells = row + [""] * (width - len(row))
+        lines = [f"{BULLET} <b>{_formatted(cells[0])}</b>" if cells[0] else BULLET]
+        for label, value in zip(labels[1:], cells[1:]):
+            if value:
+                lines.append(f"<i>{_formatted(label)}:</i> {_formatted(value)}"
+                             if label else _formatted(value))
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def _render_table(rows: list[list[str]]) -> str:
-    """Telegram has no tables. Two columns read best as a labelled list; wider
-    ones keep their shape in a monospace block, which scrolls sideways."""
+    """Telegram has no tables. Two columns read best as a labelled list. Wider
+    ones keep their shape in a monospace block - unless that would be too wide
+    for a phone, when each row becomes a short list of its own. Padding a long
+    cell's whole column also once made a reply too long for Telegram to take,
+    and it was never seen."""
     width = max(len(row) for row in rows)
     header, body = rows[0], rows[1:]
 
@@ -116,6 +149,8 @@ def _render_table(rows: list[list[str]]) -> str:
 
     widths = [max(len(_plain(row[i])) if i < len(row) else 0 for row in rows)
               for i in range(width)]
+    if sum(widths) + 2 * (width - 1) > TABLE_WIDTH:
+        return _table_as_list(header, body, width)
     lines = []
     for row in rows:
         padded = [_plain(row[i] if i < len(row) else "").ljust(widths[i])
@@ -212,13 +247,29 @@ def _convert(chunk: str, in_code: bool) -> tuple[str, bool]:
     return "".join(rendered), in_code
 
 
+def _fit(chunk: str, in_code: bool) -> tuple[list[str], bool]:
+    """Convert a chunk, splitting it again if what comes out is still too long.
+
+    The chunk was cut to size as text, but markup can make it grow, and a
+    message over the limit is refused outright - lost, not shortened.
+    """
+    converted, after = _convert(chunk, in_code)
+    if visible_length(converted) <= VISIBLE_LIMIT or len(chunk) < 200:
+        return [converted], after
+    parts, state = [], in_code
+    for piece in _chunk(chunk, len(chunk) // 2):
+        fitted, state = _fit(piece, state)
+        parts += fitted
+    return parts, state
+
+
 def render_body(text: str) -> list[str]:
     """Message text -> one or more ready-to-send HTML strings."""
     messages: list[str] = []
     in_code = False
     for chunk in _chunk(text, CHUNK_LIMIT):
-        converted, in_code = _convert(chunk, in_code)
-        messages.append(converted)
+        fitted, in_code = _fit(chunk, in_code)
+        messages += fitted
     return [m for m in messages if m.strip()]
 
 
@@ -238,6 +289,9 @@ def _render_tool(event: Event) -> list[OutMessage]:
         header += f" · <i>{_escape(event.text)}</i>"
     if failed:
         header += " · <b>failed</b>"
+    if event.extra.get("late"):
+        # Shown earlier as having no result; this is the result, come at last.
+        header += " · <i>its result, which came later</i>"
 
     parts = [header]
     tool_in = (event.extra.get("input") or "").strip()
@@ -256,6 +310,13 @@ def render(event: Event) -> list[OutMessage]:
     """An event -> the messages to post. Empty list means 'post nothing'."""
     if event.kind == "tool":
         return _render_tool(event)
+
+    if event.kind == "compacted":
+        # The summary itself runs to tens of thousands of characters that you
+        # never wrote; VS Code folds it away behind a marker too.
+        return [OutMessage(f"{COMPACTED_ICON} <i>Conversation compacted: Claude "
+                           "carried on from a summary of everything before "
+                           "this point.</i>", silent=True)]
 
     if event.kind == "turn_end":
         # Deliberately silent. This fired whenever a session's cost was written -

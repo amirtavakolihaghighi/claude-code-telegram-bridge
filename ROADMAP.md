@@ -128,6 +128,21 @@ Phase 1 will be noisy and ugly. This fixes that.
 - [x] `--backfill` fills every topic with its whole past conversation
 - [x] Progress logging and patient retries, so an hours-long backfill survives
       a wobbly connection
+- [x] Catching up (`bridge.bat` → 10): send everything never sent, in order,
+      including the whole history on a machine just set up
+- [x] Nothing lost while it is off: read positions wait for the post, chats
+      begun while it was off are sent whole, outages are waited out
+- [x] Waits for Telegram at sign-in and restarts itself after errors, instead of
+      dying silently
+- [x] Only one copy at a time, and a status that notices one stuck "Running"
+- [x] `/resend` to start a topic over from the chat's first message, `/mute` and
+      `/unmute` to hold a chat back without losing any of it
+- [x] Chats Claude Code has deleted read from backup copies (`CHAT_BACKUPS`)
+- [x] One bot shared by two computers used one at a time, with a warning if
+      both run at once
+- [x] `TOPIC_ICONS=default` for Telegram's own topic icons
+- [ ] Say in Telegram when it comes back after a long gap, and what it is
+      catching up on
 - [ ] Search across all chats
 - [ ] A digest message when several chats are busy at once
 - [ ] Clean up topics whose chat has been deleted

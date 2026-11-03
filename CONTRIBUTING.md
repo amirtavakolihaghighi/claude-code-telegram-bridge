@@ -67,9 +67,18 @@ group, and creating topics is tighter still. Anything that sends in a loop must
 go through the queue in `sinks.py`, which merges adjacent messages and backs off
 on `RetryAfter`.
 
+**A saved read position must never pass a message that has not been posted.**
+That is the whole of how nothing is lost when the bridge stops: `mirror.py`
+keeps each chat's position at the start of its oldest unposted message, or of
+a tool call still waiting for its result, and the sink reports every message
+it has finished with. A new way of sending must report back too, or positions
+stop moving; a new way of skipping must say where it skipped, in
+`mirrored_from`, or catching up cannot find it.
+
 **One bot token, one running copy.** Two instances polling with the same token
-produce `Conflict` errors and neither works. Stop the background service before
-running a second copy by hand.
+produce `Conflict` errors and neither works. A lock in `runtime/` makes a
+second copy refuse to start; stop the background one before running another by
+hand.
 
 **Windows paths have spaces and drive letters.** Compare paths with
 `locator.normalise`, never with string equality.

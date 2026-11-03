@@ -176,3 +176,78 @@ def test_a_url_with_a_quote_cannot_break_out_of_the_tag():
 def test_markdown_inside_a_table_cell_still_formats():
     rendered = render_body("| a | b |\n|---|---|\n| **bold** | `code` |")[0]
     assert "<b>" in rendered and "<code>code</code>" in rendered
+
+
+# -- markers -----------------------------------------------------------------
+def test_a_compacted_conversation_is_one_short_marker():
+    from bridge.events import Event
+    [message] = render(Event("compacted", "s1"))
+
+    assert "Conversation compacted" in message.html
+    assert message.silent is True
+
+
+def test_a_result_that_came_later_says_so():
+    from bridge.events import Event
+    late = Event("tool", "s1", text="long research", tool_name="Agent",
+                 extra={"input": "", "output": "the findings", "late": True})
+
+    [message] = render(late)
+
+    assert "its result, which came later" in message.html
+    assert "the findings" in message.html
+
+
+# -- staying inside Telegram's limit -----------------------------------------
+WIDE_TABLE = (
+    "| Option | What it does | Special cases |\n|---|---|---|\n"
+    "| **Install** | Sets the bridge to start by itself every time you sign in, "
+    "hidden, as you | If it is already installed, it rewrites the task |\n"
+    "| **Stop** | Ends the background copy | Only until your next sign-in |\n")
+
+
+def test_a_table_too_wide_for_a_phone_becomes_a_list():
+    rendered = render_body(WIDE_TABLE)[0]
+
+    assert "<pre>" not in rendered and "|" not in rendered
+    assert rendered.startswith("• <b><b>Install</b></b>")   # bold kept, as ever
+    assert "<i>What it does:</i> Ends the background copy" in rendered
+    assert "<i>Special cases:</i> Only until your next sign-in" in rendered
+
+
+def test_a_narrow_table_keeps_its_columns_lined_up():
+    rendered = render_body("| chat | MB | posts |\n|---|---|---|\n"
+                           "| 3c9e1f70 | 120.5 | 812 |\n| a47d02b8 | 2.1 | 40 |")[0]
+
+    assert rendered.startswith("<pre>")
+
+
+def test_no_part_of_a_long_reply_is_longer_than_telegram_takes():
+    """A reply with a wide table was refused as too long, and never seen."""
+    from bridge.format import VISIBLE_LIMIT, visible_length
+    rows = "".join(f"| row {n} | {'a long cell ' * 12} | {'and more ' * 9} |\n"
+                   for n in range(40))
+    reply = "Intro.\n\n| A | B | C |\n|---|---|---|\n" + rows + "\nThe end."
+
+    parts = render_body(reply)
+
+    assert all(visible_length(part) <= VISIBLE_LIMIT for part in parts)
+    assert "The end." in parts[-1]
+
+
+def test_a_part_that_grows_past_the_limit_is_split_again(monkeypatch):
+    """Even a narrow table can be padded past the limit over enough rows."""
+    from bridge import format as fmt
+    rows = "".join(f"| {n} | x | y |\n" for n in range(260))
+    text = "| a | b | c |\n|---|---|---|\n| " + "w" * 40 + " | x | y |\n" + rows
+
+    parts = render_body(text)
+
+    assert len(parts) > 1
+    assert all(fmt.visible_length(part) <= fmt.VISIBLE_LIMIT for part in parts)
+
+
+def test_length_is_counted_the_way_telegram_counts_it():
+    from bridge.format import visible_length
+    assert visible_length("<b>a&amp;b</b>") == 3
+    assert visible_length("\U0001f916") == 2        # an emoji is two units

@@ -33,17 +33,19 @@ echo   ============================================
 echo.
 call :short_status
 echo.
-echo     1   Status          (is it running?)
-echo     2   Start
+echo     1   Status          (is it running? is it keeping up?)
+echo     2   Start           (in the background; installs it if needed)
 echo     3   Stop
 echo     4   Restart
 echo.
-echo     5   Install         (start automatically at sign-in)
+echo     5   Install         (start by itself at every sign-in)
 echo     6   Uninstall       (stop doing that)
 echo.
 echo     7   Show log        (last 40 lines)
 echo     8   Watch log       (live, Ctrl+C to stop)
-echo     9   Run here        (in this window, Ctrl+C to stop)
+echo     9   Run here        (in this window instead, Ctrl+C to stop)
+echo.
+echo    10   Send missed history  (everything never sent, oldest first)
 echo.
 echo     0   Exit
 echo.
@@ -59,6 +61,7 @@ if "%choice%"=="6" call :run uninstall
 if "%choice%"=="7" call :showlog
 if "%choice%"=="8" call :watchlog
 if "%choice%"=="9" call :foreground
+if "%choice%"=="10" call :run catch-up
 if "%choice%"=="0" goto :done
 
 if not "%choice%"=="0" (
@@ -75,20 +78,9 @@ exit /b 0
 rem ---------------------------------------------------------------- helpers
 
 :short_status
-schtasks /Query /TN "ClaudeCodeTelegramBridge" >nul 2>&1
-if errorlevel 1 (
-    echo     Not installed  -  choose 5 to have it start by itself
-    goto :eof
-)
-for /f "tokens=2 delims=:" %%S in ('schtasks /Query /TN "ClaudeCodeTelegramBridge" /FO LIST ^| findstr /B /C:"Status:"') do (
-    set "state=%%S"
-)
-set "state=!state: =!"
-if /i "!state!"=="Running" (
-    echo     Running
-) else (
-    echo     Installed but not running  -  choose 2 to start
-)
+rem  Asks the bridge itself rather than Task Scheduler, which says "Running"
+rem  for a copy that is stuck, and knows nothing of one started with 9.
+for /f "delims=" %%S in ('"%PY%" -m tools.autostart brief') do echo     %%S
 goto :eof
 
 :run
@@ -122,9 +114,19 @@ powershell -NoProfile -Command "Get-Content '%LOG%' -Tail 20 -Wait"
 goto :eof
 
 :foreground
+rem  Only one copy may run at a time; a second one would refuse to start.
+"%PY%" -m tools.autostart running >nul 2>&1
+if not errorlevel 1 (
+    echo.
+    "%PY%" -m tools.autostart running
+    choice /C YN /M "  Stop it and run here instead"
+    if errorlevel 2 goto :eof
+    "%PY%" -m tools.autostart stop
+    if errorlevel 1 goto :eof
+)
 echo.
 echo   Running in this window. Close it or press Ctrl+C to stop.
-echo   (If the background copy is running too, stop it first with 3.)
+echo   Afterwards choose 2 to have it carry on in the background.
 echo.
 "%PY%" -m bridge
 goto :eof

@@ -109,3 +109,60 @@ def test_the_last_part_of_a_path_is_found_whatever_the_separator():
 def test_a_missing_claude_home_is_not_an_error(tmp_path):
     assert find_session_files(tmp_path / "nothing-here", None) == []
     assert known_projects(tmp_path / "nothing-here") == {}
+
+
+# -- copies kept in a backup folder ------------------------------------------
+def backup_copy(claude_home: Path, name: str, chat: Path, keep: int | None = None
+                ) -> Path:
+    """Copy a chat into a backup folder laid out like ~/.claude/projects,
+    keeping only its first `keep` bytes, as an older copy would."""
+    data = chat.read_bytes()
+    target = claude_home.parent / name / chat.parent.name / chat.name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data if keep is None else data[:keep])
+    return target
+
+
+def test_a_chat_still_in_claude_code_is_read_from_there_not_a_copy(
+        chat_file, claude_home):
+    live = chat_file(r"C:\Code\app", "s1", [user_text("hello")])
+    backup_copy(claude_home, "projects - Backup 2026-10-16", live)
+
+    [found] = find_session_files(claude_home, None,
+                                 [str(claude_home.parent / "projects - Backup*")])
+
+    assert found.path == live and found.backup is False
+
+
+def test_a_chat_claude_code_deleted_is_read_from_its_copy(chat_file, claude_home):
+    live = chat_file(r"C:\Code\app", "s1", [user_text("hello")])
+    copy = backup_copy(claude_home, "projects - Backup 2026-10-16", live)
+    live.unlink()
+
+    [found] = find_session_files(claude_home, None,
+                                 [str(claude_home.parent / "projects - Backup*")])
+
+    assert found.path == copy and found.backup is True
+    assert found.project == Path(r"C:\Code\app")
+
+
+def test_of_several_copies_the_most_complete_is_read(chat_file, claude_home):
+    live = chat_file(r"C:\Code\app", "s1",
+                     [user_text("one"), assistant_text("two")])
+    backup_copy(claude_home, "old backup", live, keep=10)
+    full = backup_copy(claude_home, "new backup", live)
+    live.unlink()
+
+    [found] = find_session_files(claude_home, None,
+                                 [str(claude_home.parent / "old backup"),
+                                  str(claude_home.parent / "new backup")])
+
+    assert found.path == full
+
+
+def test_without_backups_a_deleted_chat_is_simply_gone(chat_file, claude_home):
+    live = chat_file(r"C:\Code\app", "s1", [user_text("hello")])
+    backup_copy(claude_home, "projects - Backup 2026-10-16", live)
+    live.unlink()
+
+    assert find_session_files(claude_home, None) == []

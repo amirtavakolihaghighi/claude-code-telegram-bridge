@@ -53,6 +53,11 @@ class Config:
     cswap_cli: Path | None = None
     show_emails: str = "mask"
     question_timeout: float = 300.0
+    # Folders, or wildcard patterns for them, holding copies of
+    # ~/.claude/projects. A chat Claude Code has deleted is read from there.
+    chat_backups: tuple[str, ...] = ()
+    # "project": each project's topics share an icon. "default": Telegram's.
+    topic_icons: str = "project"
 
     @property
     def watches_everything(self) -> bool:
@@ -180,6 +185,13 @@ def load_config(require_token: bool = True) -> Config:
     if show_emails not in ("mask", "full", "none"):
         raise SystemExit("SHOW_EMAILS must be mask, full or none")
 
+    chat_backups = tuple(part.strip() for part in
+                         os.getenv("CHAT_BACKUPS", "").split(";") if part.strip())
+
+    topic_icons = (os.getenv("TOPIC_ICONS", "").strip().lower() or "project")
+    if topic_icons not in ("project", "default"):
+        raise SystemExit("TOPIC_ICONS must be project or default")
+
     return Config(
         bot_token=token,
         group_id=_optional_int("TELEGRAM_GROUP_ID"),
@@ -199,4 +211,6 @@ def load_config(require_token: bool = True) -> Config:
         cswap_cli=cswap_cli,
         show_emails=show_emails,
         question_timeout=question_timeout,
+        chat_backups=chat_backups,
+        topic_icons=topic_icons,
     )

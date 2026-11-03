@@ -17,17 +17,28 @@ the last complete newline and remember our byte offset.
 from __future__ import annotations
 
 import json
+import logging
 import time
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 from .events import Event
 from .locator import leaf_name
 
+log = logging.getLogger(__name__)
+
 SKIP_PREFIXES = ("<system-reminder>", "<local-command", "<command-name>")
 LABEL_LIMIT = 90
 INPUT_LIMIT = 600
 OUTPUT_LIMIT = 900
-PENDING_TIMEOUT = 120.0     # seconds to wait for a result before giving up
+# Seconds a call may wait at the end of its chat for a result before it is
+# shown without one. Builds and subagents easily take minutes; two minutes,
+# as it once was, showed them as having no result and then lost the real one.
+PENDING_TIMEOUT = 1800.0
+NO_RESULT = "(no result recorded)"
+# How a compacted conversation's summary begins, in versions that do not flag it.
+COMPACTED_PREFIX = "This session is being continued from a previous conversation"
 
 DEFAULT_ICON = "⚙️"
 TOOL_ICONS = {
@@ -147,6 +158,32 @@ def _result_text(block: dict) -> str:
     return ""
 
 
+def _prompt_text(prompt: object) -> str:
+    """A prompt's text, whether recorded as a string or as content blocks."""
+    if isinstance(prompt, str):
+        return _clean(prompt)
+    if not isinstance(prompt, list):
+        return ""
+    parts = []
+    for block in prompt:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            parts.append(str(block.get("text", "")))
+        elif block.get("type") == "image":
+            parts.append("[image]")
+    return _clean("\n\n".join(part for part in parts if part.strip()))
+
+
+def _is_compaction(record: dict, content: list) -> bool:
+    if record.get("isCompactSummary"):
+        return True
+    first = next((b for b in content if isinstance(b, dict)
+                  and b.get("type") == "text"), None)
+    return bool(first) and str(first.get("text", "")).lstrip().startswith(
+        COMPACTED_PREFIX)
+
+
 def parse_record(record: dict) -> list[Event]:
     kind = record.get("type")
     session_id = record.get("session_id") or record.get("sessionId") or ""
@@ -169,6 +206,19 @@ def parse_record(record: dict) -> list[Event]:
         return [Event("turn_end", session_id, uuid=uuid, timestamp=timestamp,
                       extra={"cost": cost})]
 
+    if kind == "attachment":
+        attached = record.get("attachment")
+        # Typed while Claude was busy, and taken into the turn already under
+        # way. It never becomes an ordinary user record, so without this it
+        # never reached Telegram at all.
+        if isinstance(attached, dict) and attached.get("type") == "queued_command" \
+                and attached.get("commandMode") == "prompt":
+            text = _prompt_text(attached.get("prompt"))
+            if text and not _is_noise(text):
+                return [Event("user", session_id, text=text, uuid=uuid,
+                              timestamp=timestamp, extra={"mid_turn": True})]
+        return []
+
     if kind not in ("user", "assistant") or record.get("isMeta"):
         return []
 
@@ -178,13 +228,22 @@ def parse_record(record: dict) -> list[Event]:
     if isinstance(content, str):
         content = [{"type": "text", "text": content}]
 
+    # Claude Code writes the summary of a compacted conversation as though
+    # you had typed it. VS Code shows a marker; so do we.
+    if kind == "user" and _is_compaction(record, content):
+        return [Event("compacted", session_id, uuid=uuid, timestamp=timestamp)]
+
     events: list[Event] = []
+    images = 0
     for block in content:
         if not isinstance(block, dict):
             continue
         block_type = block.get("type")
 
-        if block_type == "text":
+        if block_type == "image" and kind == "user":
+            images += 1
+
+        elif block_type == "text":
             text = _clean(block.get("text", ""))
             if text and not _is_noise(text):
                 events.append(Event("user" if kind == "user" else "assistant",
@@ -214,6 +273,16 @@ def parse_record(record: dict) -> list[Event]:
 
         # thinking blocks are intentionally ignored
 
+    if images:
+        # A pasted picture used to vanish without a trace. Say it was there.
+        marker = "[image]" if images == 1 else f"[{images} images]"
+        for index, event in enumerate(events):
+            if event.kind == "user":
+                events[index] = replace(event, text=f"{marker}\n\n{event.text}")
+                break
+        else:
+            events.insert(0, Event("user", session_id, text=marker, uuid=uuid,
+                                   timestamp=timestamp))
     return events
 
 
@@ -243,12 +312,39 @@ def read_title(path: Path) -> str | None:
     return title
 
 
-def _merge(call: Event, output: str = "", is_error: bool = False) -> Event:
+def started_at(path: Path) -> float | None:
+    """When a chat began, as a Unix time, or None if that cannot be told.
+
+    The first timestamp written inside it; failing that, the file's creation
+    time where the system records one. Not the other way round: a backup
+    copy was created when it was copied, not when its chat began.
+    """
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for _, line in zip(range(50), fh):
+                if '"timestamp"' not in line:
+                    continue
+                try:
+                    stamp = json.loads(line).get("timestamp")
+                    return datetime.fromisoformat(stamp).timestamp()
+                except (json.JSONDecodeError, AttributeError, TypeError,
+                        ValueError):
+                    continue
+        born = getattr(path.stat(), "st_birthtime", None)
+    except OSError:
+        return None
+    return float(born) if born else None
+
+
+def _merge(call: Event, output: str = "", is_error: bool = False,
+           late: bool = False) -> Event:
     extra = dict(call.extra)
     extra["output"] = output
     extra["is_error"] = is_error
+    extra["late"] = late
     return Event("tool", call.session_id, text=call.text, tool_name=call.tool_name,
-                 uuid=call.uuid, timestamp=call.timestamp, extra=extra)
+                 uuid=call.uuid, timestamp=call.timestamp, extra=extra,
+                 start=call.start)
 
 
 class SessionReader:
@@ -259,6 +355,9 @@ class SessionReader:
         self.session_id = session_id
         self.offset = offset
         self._pending: dict[str, tuple[Event, float]] = {}
+        # Calls already shown as having no result, in case it comes after all.
+        self._given_up: dict[str, Event] = {}
+        self._shrunk = False
 
     def size(self) -> int:
         try:
@@ -266,27 +365,69 @@ class SessionReader:
         except OSError:
             return 0
 
+    def unread(self) -> int:
+        """Bytes written to the chat that have not been read yet."""
+        return max(self.size() - self.offset, 0)
+
     def seek_to_end(self) -> None:
         self.offset = self.size()
 
+    def pending_start(self) -> int | None:
+        """Where the oldest tool call still waiting for its result begins.
+
+        Reading again from any later point would find the result without its
+        call and drop it, so a saved read position must not pass this.
+        """
+        starts = [event.start for event, _ in self._pending.values()]
+        return min(starts) if starts else None
+
+    def _give_up(self, keys: list[str]) -> list[Event]:
+        """Show these calls as having no result, remembering them in case it
+        comes after all."""
+        shown = []
+        for key in keys:
+            call, _ = self._pending.pop(key)
+            self._given_up[key] = call
+            shown.append(_merge(call, NO_RESULT))
+        while len(self._given_up) > 200:
+            self._given_up.pop(next(iter(self._given_up)))
+        return shown
+
     def _flush_stale(self, now: float) -> list[Event]:
         """Show tool calls whose result never arrived (interrupted, crashed)."""
-        stale = [key for key, (_, seen) in self._pending.items()
-                 if now - seen > PENDING_TIMEOUT]
-        return [_merge(self._pending.pop(key)[0], "(no result recorded)")
-                for key in stale]
+        return self._give_up([key for key, (_, seen) in self._pending.items()
+                              if now - seen > PENDING_TIMEOUT])
 
-    def _read_raw(self) -> list[Event]:
-        size = self.size()
-        if size < self.offset:      # file was rewritten - start over
-            self.offset = 0
+    def _read_raw(self, max_bytes: int | None = None) -> list[Event]:
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            # Gone, or being moved. Starting over here would send the whole
+            # chat again if it reappears, so leave the position alone.
+            return []
+        if size < self.offset:
+            # Shorter than what was already read: an older copy of the chat
+            # from a backup, most likely. Starting over used to send the
+            # whole chat a second time; there is nothing new here to send.
+            if not self._shrunk:
+                log.info("chat %s is shorter than what was already sent, so "
+                         "there is nothing new in it", self.session_id[:8])
+                self._shrunk = True
+            return []
         if size == self.offset:
             return []
 
         try:
             with self.path.open("rb") as fh:
                 fh.seek(self.offset)
-                data = fh.read()
+                data = fh.read(max_bytes) if max_bytes else fh.read()
+                # A single record can be larger than the slice, an image
+                # especially; it still has to be read whole.
+                while max_bytes and b"\n" not in data:
+                    more = fh.read(max_bytes)
+                    if not more:
+                        break
+                    data += more
         except OSError:
             return []
 
@@ -295,42 +436,67 @@ class SessionReader:
             return []
 
         complete = data[: last_newline + 1]
+        position = self.offset
         self.offset += len(complete)
 
         events: list[Event] = []
-        for raw in complete.decode("utf-8", errors="replace").splitlines():
-            raw = raw.strip()
+        # Split on newlines only. str.splitlines() also breaks at characters
+        # such as U+2028, which JSON may carry unescaped inside a string, and
+        # would lose that record.
+        for line in complete.split(b"\n")[:-1]:
+            start = position
+            position += len(line) + 1
+            raw = line.decode("utf-8", errors="replace").strip()
             if not raw:
                 continue
             try:
                 record = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(record, dict):
+                continue
             for event in parse_record(record):
-                if event.session_id:
-                    events.append(event)
-                else:
-                    events.append(Event(event.kind, self.session_id, event.text,
-                                        event.tool_name, event.uuid,
-                                        event.timestamp, event.extra))
+                events.append(replace(event, start=start,
+                                      session_id=event.session_id
+                                      or self.session_id))
         return events
 
-    def read_new(self) -> list[Event]:
+    def read_new(self, max_bytes: int | None = None) -> list[Event]:
+        """Events from what has been written since the last read.
+
+        With max_bytes, reads roughly that much at most, so a long backlog can
+        be taken a slice at a time.
+        """
         now = time.monotonic()
         out: list[Event] = []
 
-        for event in self._read_raw():
+        for event in self._read_raw(max_bytes):
             if event.kind == "tool_call":
                 key = event.extra.get("id") or event.uuid
                 self._pending[key] = (event, now)
             elif event.kind == "tool_result":
-                held = self._pending.pop(event.extra.get("id", ""), None)
-                if held is None:
-                    continue        # a result for a call we never saw
-                out.append(_merge(held[0], event.extra.get("output", ""),
-                                  event.extra.get("is_error", False)))
+                key = event.extra.get("id", "")
+                output = event.extra.get("output", "")
+                failed = event.extra.get("is_error", False)
+                held = self._pending.pop(key, None)
+                if held is not None:
+                    out.append(_merge(held[0], output, failed))
+                elif key in self._given_up:
+                    # Shown as having no result, and then it came: show it.
+                    out.append(_merge(self._given_up.pop(key), output, failed,
+                                      late=True))
+                # Otherwise a result for a call read before where we started.
+            elif event.kind == "user" and not event.extra.get("mid_turn"):
+                # A new prompt means the turn before it is over, so a call
+                # still waiting never got its result. Show it where it was,
+                # not at the end of the chat.
+                out.extend(self._give_up(list(self._pending)))
+                out.append(event)
             else:
                 out.append(event)
 
-        out.extend(self._flush_stale(now))
+        # While a backlog is still being read, a missing result is usually
+        # just further down the file, however long ago the call was read.
+        if self.unread() == 0:
+            out.extend(self._flush_stale(now))
         return out

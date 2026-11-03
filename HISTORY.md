@@ -71,7 +71,8 @@ project usually holds several chats and they were impossible to tell apart
 otherwise.
 
 **Always running.** A Windows Scheduled Task starts the bridge at sign-in with
-no visible window, restarts it if it crashes, and keeps going on battery.
+no visible window, and keeps going on battery. Keeping it up after a failure
+turned out to be the bridge's own job — see "Off for sixteen days" below.
 
 ## Things that went wrong, and what fixed them
 
@@ -100,6 +101,45 @@ bot may run per token — worth remembering before adding a second machine.
 **A network timeout posted a message twice.** The default 5-second timeout was
 too tight; a send that had actually succeeded looked like a failure and got
 retried. Timeouts raised to 30 seconds.
+
+**Off for sixteen days, and nobody knew.** Twice the PC restarted and the bridge
+never came back; once it stopped mid-afternoon. The log just went quiet. Laid
+against Windows' own event log, the pattern was plain: every start that
+happened while Telegram was unreachable — at sign-in the network often is not —
+died in its first second, before writing a word, because `pythonw` has nowhere
+to print an error. And the task's "restart on failure" never fired. Tested with
+a throwaway task that exits with an error: Task Scheduler only restarts a task
+that fails to *launch*. Now the bridge waits for Telegram, logs every way it can
+end, and starts itself again after anything short of a bad setting.
+
+**What it missed while off was lost, three ways.** Chats begun while it was off
+looked exactly like old history when it came back, so they were followed "from
+now" — thirteen of them, including one whose topic started in the middle of a
+conversation. Messages queued but not yet posted vanished whenever it stopped,
+because read positions were saved when a message was queued, not when it was
+posted. And a message that could not be posted within about four minutes was
+dropped. Now a read position waits for the post. The bridge records when it was
+last running, so a chat begun after that is sent whole, and skipped history is
+recorded where it was skipped. Catching up sends all of it, oldest first.
+
+That last part needed one design choice. Telegram cannot put a message above
+ones already posted, so a topic that began mid-conversation can never be made
+whole. Such a chat is sent again: its topic is deleted and everything goes into
+a new one, in order.
+
+**Complete is not the same as nothing lost.** Checking every chat against what
+VS Code shows turned up gaps that no outage caused, because the parser had
+never handled them. A message typed while Claude was working, and taken into
+the running turn, is recorded as an attachment rather than a user message, so
+it never reached Telegram. The summary of a compacted conversation is recorded
+as though you typed it, and arrived as twenty thousand characters "from you". A
+tool taking more than two minutes was declared to have no result, and the real
+one was thrown away when it came — 137 times across thirty chats. One record
+containing U+2028 had been split in two and lost. Telegram cannot be read back,
+so which topics actually had these holes could not be checked directly.
+Instead, any topic that could have been touched by one was deleted and sent
+again. Only chats sent in one piece on day one, untouched since, and free of
+every one of these were left alone.
 
 ## Decisions worth remembering
 

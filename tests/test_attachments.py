@@ -110,9 +110,10 @@ async def test_a_message_with_a_button_is_posted_on_its_own(sink, tmp_path):
     await sink.send("s1", OutMessage("first", attach=offered))
     await sink.send("s1", OutMessage("second"))
 
-    session, text, _, attach = sink._take_batch()
-    assert text == "first"
-    assert attach == offered
+    batch = sink._take_batch()
+    assert batch.text == "first"
+    assert batch.attach == offered
+    assert batch.count == 1
     assert len(sink._pending) == 1
 
 
@@ -121,6 +122,7 @@ async def test_ordinary_messages_still_merge(sink):
     await sink.send("s1", OutMessage("one"))
     await sink.send("s1", OutMessage("two"))
 
-    _, text, _, attach = sink._take_batch()
-    assert "one" in text and "two" in text
-    assert attach == ""
+    batch = sink._take_batch()
+    assert "one" in batch.text and "two" in batch.text
+    assert batch.attach == ""
+    assert batch.count == 2

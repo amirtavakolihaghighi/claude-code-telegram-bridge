@@ -61,8 +61,13 @@ REMEMBER = "R"
 SEND_FILE = "f"
 QUESTION = "q"
 QUESTION_DONE = "Q"
+RESEND = "r"
+KEEP = "k"
 TICK = "✅"
 SEND = "\U0001f4e4"
+AGAIN = "♻️"
+MUTED = "\U0001f507"
+UNMUTED = "\U0001f50a"
 
 PHOTO_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 CHART = "\U0001f4ca"
@@ -87,6 +92,9 @@ COMMANDS = [
     BotCommand("file", "Send me a file from this project"),
     BotCommand("archive", "Save this chat as a file, then close the topic"),
     BotCommand("reopen", "Reopen a closed topic so it can continue"),
+    BotCommand("resend", "Delete this topic and send the whole chat again"),
+    BotCommand("mute", "Stop sending this chat here, until /unmute"),
+    BotCommand("unmute", "Send this chat here again, with what was missed"),
     BotCommand("vscode", "Link that opens this chat in the editor"),
     BotCommand("status", "Which chat, which project, busy or not"),
     BotCommand("help", "List these commands"),
@@ -129,7 +137,8 @@ def _split(text: str) -> list[str]:
 
 
 def chat_path(config: Config, session_id: str) -> Path | None:
-    for session in find_session_files(config.claude_home, config.watch_projects):
+    for session in find_session_files(config.claude_home, config.watch_projects,
+                                      config.chat_backups):
         if session.session_id == session_id:
             return session.path
     return None
@@ -145,6 +154,7 @@ class Inbox:
         self.echo = echo
         self.approval = approval
         self.sink = sink        # for closing and reopening topics
+        self.mirror = None      # for /resend; attached once it exists
         self.accounts = Accounts(config.cswap_cli)
         self.bot = None         # filled in once the Application is built
 
@@ -169,6 +179,15 @@ class Inbox:
             await message.reply_text(part, parse_mode=ParseMode.HTML,
                                      message_thread_id=message.message_thread_id,
                                      disable_web_page_preview=True)
+
+    def _not_here(self) -> str:
+        """Said in a topic this computer has no chat for. With one bot shared
+        by two computers, that is usually a chat of the other one."""
+        here = f" ({_esc(self.config.machine_label)})" if self.config.machine_label \
+            else ""
+        return ("This topic isn't linked to a chat on this computer" + here +
+                ". If it belongs to your other computer, reply while that one is "
+                "running instead. /new starts a new chat here.")
 
     def _session_for(self, update: Update) -> str | None:
         message = update.effective_message
@@ -379,6 +398,10 @@ class Inbox:
             await self._send_file(query, Path(path) if path else None)
             return
 
+        if action in (RESEND, KEEP):
+            await self._on_resend_button(query, action, request_id)
+            return
+
         allow = action in (ALLOW, ALLOW_ALL, REMEMBER)
         handled = self.approval.resolve(request_id, allow=allow,
                                         always=action == ALLOW_ALL,
@@ -517,6 +540,13 @@ class Inbox:
                                       f"previous message. Send /stop to cut it short.")
             return
 
+        if session_id and self.state.is_muted(session_id):
+            # Its answer would never appear here, which looks like nothing
+            # happened at all.
+            await self._reply(update, f"{MUTED} This chat is muted, so its answer "
+                                      f"would not show up here. /unmute it first.")
+            return
+
         if is_project_open(self.config.claude_home, project):
             await self._reply(
                 update,
@@ -560,8 +590,7 @@ class Inbox:
             return
         session_id = self._session_for(update)
         if session_id is None:
-            await self._reply(update, "I don't know which chat this topic is for. "
-                                      "Use /new to start one.")
+            await self._reply(update, self._not_here())
             return
         await self._send_prompt(update, session_id, message.text,
                                 self._project_for(session_id))
@@ -572,8 +601,7 @@ class Inbox:
             return
         session_id = self._session_for(update)
         if session_id is None:
-            await self._reply(update, "I don't know which chat this topic is for. "
-                                      "Use /new to start one.")
+            await self._reply(update, self._not_here())
             return
         await self._send_prompt(update, session_id, " ".join(context.args or []),
                                 self._project_for(session_id))
@@ -740,6 +768,98 @@ class Inbox:
             await self._reply(update, "Open again. Carry on.")
         else:
             await self._reply(update, "It was already open.")
+
+    # -- this topic: resend, mute ----------------------------------------
+    async def on_resend(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """/resend - delete this topic and send the whole chat again, in order."""
+        if not self._is_owner(update):
+            return
+        session_id = self._session_for(update)
+        if session_id is None:
+            await self._reply(update, self._not_here())
+            return
+        if self.mirror is None:
+            await self._reply(update, "Not connected to Telegram properly.")
+            return
+        if self.runner.is_busy(session_id):
+            await self._reply(update, f"{WARN} Still working. Try again when "
+                                      f"it has finished, or send /stop.")
+            return
+        if chat_path(self.config, session_id) is None:
+            await self._reply(update, f"{WARN} The chat file is gone, and there is "
+                                      f"no copy of it in CHAT_BACKUPS, so there is "
+                                      f"nothing to send it from. This topic is the "
+                                      f"only copy left - keeping it.")
+            return
+        # It deletes everything in the topic, so a stray tap must not do it.
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"{AGAIN} Delete and send again",
+                                  callback_data=f"{RESEND}|{session_id}")],
+            [InlineKeyboardButton("Keep it as it is",
+                                  callback_data=f"{KEEP}|{session_id}")],
+        ])
+        message = update.effective_message
+        await self.bot.send_message(
+            chat_id=self.config.group_id,
+            message_thread_id=message.message_thread_id if message else None,
+            text=f"{AGAIN} <b>Send this chat again from its first message?</b>\n\n"
+                 f"This topic is deleted with everything in it, and the whole "
+                 f"chat goes into a new one, in order. Anything that is not part "
+                 f"of the chat itself goes with it: files from /file and "
+                 f"/archive, and these buttons.",
+            parse_mode=ParseMode.HTML, reply_markup=keyboard)
+
+    async def _on_resend_button(self, query, action: str, session_id: str) -> None:
+        if action == KEEP:
+            await query.answer("Left as it is.")
+            try:
+                await query.edit_message_text("Left as it is.")
+            except TelegramError:
+                pass
+            return
+        if self.mirror is None or self.runner.is_busy(session_id):
+            await query.answer("Not now - try again in a moment.", show_alert=True)
+            return
+        await query.answer("Sending it again...")
+        try:
+            await query.edit_message_text(
+                f"{AGAIN} This topic is about to be deleted. The whole chat will "
+                f"be in a new one, from its first message.")
+        except TelegramError:
+            pass
+        await self.mirror.resend(session_id)
+
+    async def on_mute(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """/mute - stop sending this chat here, keeping its place."""
+        if not self._is_owner(update):
+            return
+        session_id = self._session_for(update)
+        if session_id is None:
+            await self._reply(update, self._not_here())
+            return
+        if self.state.is_muted(session_id):
+            await self._reply(update, f"{MUTED} Already muted. /unmute sends "
+                                      f"everything written meanwhile.")
+            return
+        self.state.set_muted(session_id, True)
+        await self._reply(update, f"{MUTED} <b>Muted.</b> Nothing more from this "
+                                  f"chat comes here until you /unmute it. Then "
+                                  f"everything written meanwhile follows, in order.")
+
+    async def on_unmute(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """/unmute - carry on sending this chat, starting with what was missed."""
+        if not self._is_owner(update):
+            return
+        session_id = self._session_for(update)
+        if session_id is None:
+            await self._reply(update, self._not_here())
+            return
+        if not self.state.is_muted(session_id):
+            await self._reply(update, f"{UNMUTED} It isn't muted.")
+            return
+        self.state.set_muted(session_id, False)
+        await self._reply(update, f"{UNMUTED} <b>Unmuted.</b> Anything written "
+                                  f"while it was muted follows now, in order.")
 
     # -- usage, quota and accounts ---------------------------------------
     async def on_usage(self, update: Update,
@@ -952,6 +1072,8 @@ class Inbox:
             f"<b>Chat:</b> <code>{_esc(session_id or 'not linked')}</code>",
             f"<b>Busy:</b> "
             f"{'yes' if session_id and self.runner.is_busy(session_id) else 'no'}",
+            f"<b>Muted:</b> "
+            f"{'yes' if session_id and self.state.is_muted(session_id) else 'no'}",
             f"<b>Open in VS Code:</b> "
             f"{'yes' if project and is_project_open(self.config.claude_home, project) else 'no'}",
             f"<b>Permission mode:</b> {_esc(self.config.permission_mode)}",
@@ -975,6 +1097,11 @@ class Inbox:
             "/file &lt;path&gt; — send me a file from this project\n"
             "/archive [md|html|both] — save this chat, then close the topic\n"
             "/reopen — reopen a closed topic\n\n"
+
+            "<b>This topic</b>\n"
+            "/resend — delete it and send the whole chat again, in order\n"
+            "/mute — stop sending this chat here\n"
+            "/unmute — send it here again, starting with what was missed\n\n"
 
             "<b>Spending</b>\n"
             "/usage [all] — what your chats have cost\n"
@@ -1032,6 +1159,9 @@ def build_application(config: Config, state: State, runner: Runner,
     app.add_handler(CommandHandler("file", inbox.on_file))
     app.add_handler(CommandHandler("archive", inbox.on_archive))
     app.add_handler(CommandHandler("reopen", inbox.on_reopen))
+    app.add_handler(CommandHandler("resend", inbox.on_resend))
+    app.add_handler(CommandHandler("mute", inbox.on_mute))
+    app.add_handler(CommandHandler("unmute", inbox.on_unmute))
     app.add_handler(CommandHandler("vscode", inbox.on_vscode))
     app.add_handler(CommandHandler("status", inbox.on_status))
     app.add_handler(CommandHandler("help", inbox.on_help))
