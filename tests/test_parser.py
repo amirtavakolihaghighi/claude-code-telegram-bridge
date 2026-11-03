@@ -6,14 +6,24 @@ import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from bridge.parser import (SessionReader, describe_tool, parse_record,
-                           read_title, started_at, tool_input)
+from bridge.parser import (PENDING_TIMEOUT, SessionReader, describe_tool,
+                           parse_record, read_title, started_at, tool_input)
 from tests.conftest import (assistant_text, cost_state, title, tool_result,
                             tool_use, user_text)
 
 
 def read_all(path):
     return SessionReader(path, path.stem).read_new()
+
+
+def long_past() -> float:
+    """Further back than a tool call is waited for.
+
+    The wait is timed with time.monotonic(), which counts from boot, so a
+    fixed time such as -1000 is only that far back on a machine that has been
+    up long enough: a desk PC, but not a CI runner that has just started.
+    """
+    return time.monotonic() - PENDING_TIMEOUT - 1
 
 
 # -- what we keep and what we drop -------------------------------------------
@@ -104,9 +114,9 @@ def test_an_abandoned_tool_call_eventually_shows_with_no_result(chat_file):
     reader = SessionReader(path, "s1")
     assert reader.read_new() == []
 
-    # Pretend the wait has already elapsed rather than sleeping for two minutes.
+    # Pretend the wait has already elapsed rather than sleeping through it.
     key, (event, _) = next(iter(reader._pending.items()))
-    reader._pending[key] = (event, -1000.0)
+    reader._pending[key] = (event, long_past())
 
     events = reader.read_new()
     assert events[0].extra["output"] == "(no result recorded)"
@@ -271,7 +281,7 @@ def test_a_call_whose_result_is_further_down_a_backlog_is_not_given_up_on(
     assert reader.read_new(max_bytes=50) == []
     # However long ago it was read: the rest of the file is still to come.
     key, (event, _) = next(iter(reader._pending.items()))
-    reader._pending[key] = (event, -1000.0)
+    reader._pending[key] = (event, long_past())
 
     events = []
     while reader.unread():
