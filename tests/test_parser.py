@@ -46,13 +46,30 @@ def test_subagent_chatter_is_not_mirrored(chat_file):
     assert read_all(path) == []
 
 
-def test_thinking_blocks_are_not_mirrored(chat_file):
-    record = {"type": "assistant", "uuid": "a9", "isSidechain": False,
-              "message": {"role": "assistant",
-                          "content": [{"type": "thinking", "thinking": "hmm",
-                                       "signature": "x"}]}}
-    path = chat_file(r"C:\Code\app", "s1", [record])
+def thinking(text, uuid="a9"):
+    """A thinking block. Claude's reasoning arrives with its text empty."""
+    return {"type": "assistant", "uuid": uuid, "isSidechain": False,
+            "message": {"role": "assistant",
+                        "content": [{"type": "thinking", "thinking": text,
+                                     "signature": "x"}]}}
+
+
+def test_claudes_reasoning_is_not_mirrored(chat_file):
+    """It is not in the file to mirror: only a signature is recorded."""
+    path = chat_file(r"C:\Code\app", "s1", [thinking("")])
     assert read_all(path) == []
+
+
+def test_a_note_written_between_steps_is_mirrored(chat_file):
+    """Shown in VS Code, so it belongs in Telegram. It used to be dropped
+    along with the reasoning, leaving gaps in a topic."""
+    path = chat_file(r"C:\Code\app", "s1",
+                     [thinking("I'm checking the log next.")])
+
+    events = read_all(path)
+
+    assert [(e.kind, e.text) for e in events] == [
+        ("assistant", "I'm checking the log next.")]
 
 
 def test_the_end_of_turn_cost_is_kept(chat_file):

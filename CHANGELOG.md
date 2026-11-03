@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The short notes Claude writes between steps — "I'm checking the log next" —
+  never reached Telegram, leaving gaps in every topic where VS Code shows a
+  line. They are recorded as thinking blocks, and all thinking blocks were
+  skipped. Claude's reasoning still is not mirrored: it is not written to the
+  chat file at all, only a signature is, so there is nothing to skip.
+
 ## [0.6.0] - 2026-11-03
 
 The bridge stops losing messages when it has been off, and stops being off

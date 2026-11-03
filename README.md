@@ -389,7 +389,7 @@ Not tracked:
 
 - chats in projects outside `WATCH_PROJECTS`
 - a project folder in which no chat records the project's path yet
-- subagent chatter and Claude's thinking, which are skipped inside every chat
+- subagent chatter and Claude's reasoning, which are skipped inside every chat
 - chats Claude Code has deleted. By default it deletes chat files 30 days
   after their last use; `cleanupPeriodDays` in `~/.claude/settings.json`
   changes that. The Telegram topic outlives the file, and with
@@ -657,8 +657,11 @@ Read [SECURITY.md](SECURITY.md) before running this. In short:
 ## Known limits
 
 - The bot knows a *project* is open in VS Code, but not which *chat*.
-- Subagent chatter, Claude's thinking and Claude Code's own notices (API
-  retries, hook summaries) are not mirrored. Too noisy.
+- Subagent chatter and Claude Code's own notices (API retries, hook summaries)
+  are not mirrored. Too noisy.
+- Claude's reasoning is not mirrored, because it is not written to the chat
+  file: only a signature is kept. The short notes Claude writes between steps
+  are written down, and are mirrored, as VS Code shows them.
 - A compacted conversation shows as a one-line marker, as VS Code shows it,
   not as the summary Claude Code records in your name.
 - A picture you paste into a chat shows as `[image]`; the picture itself is not

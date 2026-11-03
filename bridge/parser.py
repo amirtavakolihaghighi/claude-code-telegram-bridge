@@ -271,7 +271,18 @@ def parse_record(record: dict) -> list[Event]:
                        "is_error": bool(block.get("is_error"))},
             ))
 
-        # thinking blocks are intentionally ignored
+        elif block_type == "thinking" and kind == "assistant":
+            # Two different things arrive as "thinking" blocks. Claude's
+            # reasoning is not recorded: its text is empty, leaving only a
+            # signature. The short notes Claude writes between steps - "I'm
+            # checking the log next" - are recorded in full, and VS Code shows
+            # them in the chat, so they belong in Telegram too. Across this
+            # machine's 39 chats, every block carrying text was such a note
+            # and every reasoning block was empty.
+            text = _clean(block.get("thinking", ""))
+            if text and not _is_noise(text):
+                events.append(Event("assistant", session_id, text=text,
+                                    uuid=uuid, timestamp=timestamp))
 
     if images:
         # A pasted picture used to vanish without a trace. Say it was there.
