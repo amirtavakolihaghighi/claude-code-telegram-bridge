@@ -105,8 +105,7 @@ async def test_a_message_telegram_refuses_is_not_tried_again(tmp_path):
 
 
 # -- reporting back ----------------------------------------------------------
-async def test_every_message_is_reported_once_it_has_gone_even_when_merged(
-        tmp_path):
+async def test_every_message_is_reported_once_it_has_gone(tmp_path):
     bot = FakeBot()
     sink, _ = make(tmp_path, bot)
     reported: list[str] = []
@@ -116,8 +115,21 @@ async def test_every_message_is_reported_once_it_has_gone_even_when_merged(
 
     await drain(sink)
 
-    assert len(bot.sent) == 1                   # merged into one post
     assert reported == ["s1", "s1", "s1"]
+
+
+async def test_each_message_is_its_own_post_in_order(tmp_path):
+    """What VS Code shows as separate items must not be glued into one post,
+    however short they are or however many are waiting."""
+    bot = FakeBot()
+    sink, _ = make(tmp_path, bot)
+    for text in ("one", "two", "three"):
+        await sink.send("s1", OutMessage(text))
+    await sink.send("s2", OutMessage("elsewhere"))
+
+    await drain(sink)
+
+    assert [text for _, text in bot.sent] == ["one", "two", "three", "elsewhere"]
 
 
 async def test_one_unexpected_error_does_not_stop_everything_after_it(tmp_path):
@@ -142,16 +154,6 @@ async def test_each_post_is_counted_against_its_topic(tmp_path):
     await sink._deliver("s1", "hello", silent=True)
 
     assert state.posted("s1") == 1
-
-
-async def test_messages_full_of_emoji_are_not_merged_past_the_limit(tmp_path):
-    """Telegram counts an emoji as two; counting it as one let a merged post
-    run over."""
-    sink, _ = make(tmp_path, FakeBot())
-    await sink.send("s1", OutMessage("\U0001f916" * 1500))
-    await sink.send("s1", OutMessage("\U0001f916" * 1500))
-
-    assert sink._take_batch().count == 1
 
 
 async def test_the_queue_says_when_it_is_full(tmp_path):

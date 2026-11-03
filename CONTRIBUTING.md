@@ -64,8 +64,9 @@ you touch it, keep that property and test it.
 
 **Telegram rate limits are strict.** Roughly 20 messages a minute into one
 group, and creating topics is tighter still. Anything that sends in a loop must
-go through the queue in `sinks.py`, which merges adjacent messages and backs off
-on `RetryAfter`.
+go through the queue in `sinks.py`, which posts one message at a time, spaced to
+stay under the limit, and backs off on `RetryAfter`. It does not merge messages:
+each item VS Code shows is its own post, on purpose.
 
 **A saved read position must never pass a message that has not been posted.**
 That is the whole of how nothing is lost when the bridge stops: `mirror.py`

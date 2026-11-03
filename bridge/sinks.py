@@ -1,9 +1,11 @@
 """Where mirrored messages go: a real Telegram group, or the console.
 
 Telegram allows a bot roughly 20 messages a minute into one group. A busy turn
-easily produces more than that, so messages are queued and adjacent ones for
-the same chat are merged into a single post. A burst of ten tool calls becomes
-two or three messages instead of ten, and the mirror keeps up.
+can produce more than that, so messages are queued and posted one at a time,
+spaced to stay under the limit. Each message is one post, never glued to its
+neighbours: a line of Claude's text, a tool call with its result and a message
+you typed are what VS Code shows as separate items, and the topic keeps them
+separate. When a turn outruns the limit the topic falls behind, then catches up.
 
 A message is only given up on when Telegram refuses it outright. Without a
 connection the queue simply waits, however long that takes: the mirror's read
@@ -15,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import Callable
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -30,8 +32,6 @@ log = logging.getLogger(__name__)
 
 TOPIC_NAME_LIMIT = 128
 SEND_SPACING = 3.2      # seconds between posts, to stay under ~20/minute
-MERGE_LIMIT = 3800      # characters; Telegram's hard limit is 4096
-MERGE_MAX = 8           # never glue more than this many together
 CLIP = chr(0x1F4CE)     # paperclip, on the offer button
 # Queued messages beyond which the mirror stops reading backlog until there is
 # room, so live messages are never stuck behind hours of history.
@@ -41,24 +41,9 @@ BACKOFF = (2, 5, 10, 20, 40, 60)
 PARTIAL = " (partial copy)"
 
 
-def _units(text: str) -> int:
-    """Length as Telegram counts it, in UTF-16 units: an emoji is two. Taken
-    over the markup too, which only makes it an overestimate."""
-    return len(text.encode("utf-16-le")) // 2
-
-
 def topic_name(session_id: str, title: str | None) -> str:
     name = (title or f"chat {session_id[:8]}").strip()
     return name[:TOPIC_NAME_LIMIT] or f"chat {session_id[:8]}"
-
-
-class Batch(NamedTuple):
-    """One post: a queued message, and any that could ride along with it."""
-    session_id: str
-    text: str
-    silent: bool
-    attach: str
-    count: int          # how many queued messages it carries
 
 
 class ConsoleSink:
@@ -109,7 +94,7 @@ class TelegramSink:
         # Told about each message once it is posted or refused for good, so
         # read positions only move past what has actually gone out.
         self.on_delivered: Callable[[str], None] | None = None
-        # Held while a batch is taken and posted, so a chat's queued messages
+        # Held while a message is taken and posted, so a chat's queued messages
         # can be thrown away without one of them being half-way out.
         self._sending = asyncio.Lock()
 
@@ -164,31 +149,11 @@ class TelegramSink:
         except OSError:
             return False
 
-    def _take_batch(self) -> Batch:
-        """Pop one post: the next message plus any that can ride along with it."""
-        session_id, first = self._pending.pop(0)
-        parts = [first.html]
-        silent = first.silent
-        total = _units(first.html)
-        attach = first.attach if self.offerable(first.attach) else ""
-
-        # A message carrying a button is posted on its own, so the button
-        # cannot end up attached to somebody else's text.
-        while self._pending and len(parts) < MERGE_MAX and not attach:
-            next_session, candidate = self._pending[0]
-            if next_session != session_id:
-                break
-            if candidate.attach and self.offerable(candidate.attach):
-                break
-            if total + _units(candidate.html) + 2 > MERGE_LIMIT:
-                break
-            self._pending.pop(0)
-            parts.append(candidate.html)
-            total += _units(candidate.html) + 2
-            # If anything in the batch deserves a ping, the whole post pings.
-            silent = silent and candidate.silent
-
-        return Batch(session_id, "\n\n".join(parts), silent, attach, len(parts))
+    def _take_next(self) -> tuple[str, OutMessage, str]:
+        """Pop the next message, and the file to offer under it, if any."""
+        session_id, message = self._pending.pop(0)
+        attach = message.attach if self.offerable(message.attach) else ""
+        return session_id, message, attach
 
     async def _drain(self) -> None:
         posted = 0
@@ -201,20 +166,19 @@ class TelegramSink:
             async with self._sending:
                 if not self._pending:
                     continue        # discarded while waiting for the lock
-                batch = self._take_batch()
+                session_id, message, attach = self._take_next()
                 try:
-                    await self._deliver(batch.session_id, batch.text,
-                                        batch.silent, batch.attach)
+                    await self._deliver(session_id, message.html,
+                                        message.silent, attach)
                 except asyncio.CancelledError:
-                    raise       # stopping; the position still covers this batch
+                    raise       # stopping; the position still covers this message
                 except Exception:
                     # Before this, one surprise here ended the worker, and
                     # every message after it was silently never sent.
                     log.exception("could not post a message for %s",
-                                  batch.session_id[:8])
+                                  session_id[:8])
                 if self.on_delivered is not None:
-                    for _ in range(batch.count):
-                        self.on_delivered(batch.session_id)
+                    self.on_delivered(session_id)
             posted += 1
             # A backfill takes hours; say where it has got to now and then.
             if posted % 50 == 0:
@@ -434,7 +398,7 @@ class TelegramSink:
 
     async def _deliver(self, session_id: str, text: str, silent: bool,
                        attach: str = "") -> None:
-        """Post one batch.
+        """Post one message.
 
         Returns once it is posted, or refused in a way that trying again cannot
         fix. Without a connection it keeps trying for as long as that takes:

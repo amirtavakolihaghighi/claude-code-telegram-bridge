@@ -102,7 +102,7 @@ def test_a_secret_is_never_offered_even_if_its_kind_is_allowed(
     assert sink.offerable(secret) is False
 
 
-# -- batching ------------------------------------------------------------------
+# -- one message, one post -----------------------------------------------------
 async def test_a_message_with_a_button_is_posted_on_its_own(sink, tmp_path):
     """Otherwise the button would appear under somebody else's text."""
     from bridge.format import OutMessage
@@ -110,19 +110,15 @@ async def test_a_message_with_a_button_is_posted_on_its_own(sink, tmp_path):
     await sink.send("s1", OutMessage("first", attach=offered))
     await sink.send("s1", OutMessage("second"))
 
-    batch = sink._take_batch()
-    assert batch.text == "first"
-    assert batch.attach == offered
-    assert batch.count == 1
+    session_id, message, attach = sink._take_next()
+    assert message.html == "first"
+    assert attach == offered
     assert len(sink._pending) == 1
 
 
-async def test_ordinary_messages_still_merge(sink):
+async def test_a_message_without_an_offerable_file_gets_no_button(sink, tmp_path):
     from bridge.format import OutMessage
-    await sink.send("s1", OutMessage("one"))
-    await sink.send("s1", OutMessage("two"))
+    await sink.send("s1", OutMessage("one", attach=str(tmp_path / "missing.md")))
 
-    batch = sink._take_batch()
-    assert "one" in batch.text and "two" in batch.text
-    assert batch.attach == ""
-    assert batch.count == 2
+    _, _, attach = sink._take_next()
+    assert attach == ""
