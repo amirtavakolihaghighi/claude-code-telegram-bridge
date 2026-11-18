@@ -87,6 +87,20 @@ def test_a_broken_poll_interval_falls_back_to_the_default(clean_env):
     assert load_config().poll_interval == 2.0
 
 
+def test_claude_cli_set_in_env_is_kept_as_given(clean_env):
+    clean_env.setenv("TELEGRAM_BOT_TOKEN", "x")
+    clean_env.setenv("CLAUDE_CLI", r"C:\Tools\claude.exe")
+    settings = load_config()
+    assert settings.claude_cli == Path(r"C:\Tools\claude.exe")
+    assert settings.claude_cli_pinned is True
+
+
+def test_claude_cli_found_automatically_may_be_looked_up_again(clean_env):
+    clean_env.setenv("TELEGRAM_BOT_TOKEN", "x")
+    clean_env.setattr(config_module, "find_claude_cli", lambda: None)
+    assert load_config().claude_cli_pinned is False
+
+
 # -- not repeating your own messages -----------------------------------------
 def test_a_remembered_prompt_is_claimed_once_only():
     guard = EchoGuard()

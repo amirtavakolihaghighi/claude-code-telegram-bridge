@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,6 +60,10 @@ class Config:
     chat_backups: tuple[str, ...] = ()
     # "project": each project's topics share an icon. "default": Telegram's.
     topic_icons: str = "project"
+    # True when CLAUDE_CLI in .env chose claude.exe. That choice is never
+    # swapped for another; one found automatically is looked up again once it
+    # disappears, which it does whenever VS Code updates the extension.
+    claude_cli_pinned: bool = False
 
     @property
     def watches_everything(self) -> bool:
@@ -101,16 +107,35 @@ def _parse_projects() -> tuple[Path, ...]:
     return tuple(Path(part.strip()) for part in raw.split(";") if part.strip())
 
 
-def find_claude_cli() -> Path | None:
+_EXTENSION_VERSION = re.compile(r"^anthropic\.claude-code-(\d+(?:\.\d+)*)",
+                                re.IGNORECASE)
+
+
+def _version_key(folder_name: str) -> tuple[int, ...]:
+    """'anthropic.claude-code-2.1.326-win32-x64' -> (2, 1, 326).
+
+    Compared as numbers, because as text 2.1.99 sorts after 2.1.100. A name
+    that carries no version sorts below every one that does.
+    """
+    match = _EXTENSION_VERSION.match(folder_name)
+    if match is None:
+        return ()
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def find_claude_cli(roots: Iterable[Path] | None = None) -> Path | None:
     """The claude.exe bundled with the VS Code extension, newest version first.
 
     Using the extension's own binary means no separate install and the same
-    logged-in account.
+    logged-in account. Its folder is named after the version and deleted once
+    VS Code has updated the extension, so the answer goes stale: ask again
+    rather than keeping it.
     """
-    roots = [
-        Path.home() / ".vscode" / "extensions",
-        Path.home() / ".vscode-insiders" / "extensions",
-    ]
+    if roots is None:
+        roots = [
+            Path.home() / ".vscode" / "extensions",
+            Path.home() / ".vscode-insiders" / "extensions",
+        ]
     found: list[Path] = []
     for root in roots:
         if not root.is_dir():
@@ -123,8 +148,8 @@ def find_claude_cli() -> Path | None:
                 found.append(exe)
     if not found:
         return None
-    # Folder names end with the version, so the last one sorted is the newest.
-    return sorted(found, key=lambda p: p.parent.parent.parent.name)[-1]
+    # While VS Code updates, the old version's folder is still there for a while.
+    return max(found, key=lambda p: _version_key(p.parent.parent.parent.name))
 
 
 def load_config(require_token: bool = True) -> Config:
@@ -213,4 +238,5 @@ def load_config(require_token: bool = True) -> Config:
         question_timeout=question_timeout,
         chat_backups=chat_backups,
         topic_icons=topic_icons,
+        claude_cli_pinned=bool(cli_raw),
     )

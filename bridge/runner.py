@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .approval import ApprovalService
-from .config import ROOT, Config
+from .config import ROOT, Config, find_claude_cli
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,7 @@ class Runner:
     def __init__(self, config: Config, approval: ApprovalService | None = None):
         self.config = config
         self.approval = approval
+        self._cli = config.claude_cli
         self._locks: dict[str, asyncio.Lock] = {}
         self._running: dict[str, asyncio.subprocess.Process] = {}
         self._stopped: set[str] = set()
@@ -145,12 +146,31 @@ class Runner:
             env["BRIDGE_QUESTION_WAIT"] = str(self.approval.question_timeout)
         return env
 
-    def _command(self, session_id: str | None, prompt: str) -> tuple[list[str], str]:
-        cli = self.config.claude_cli
-        if cli is None:
+    def _claude_cli(self) -> Path:
+        """The claude.exe to run, looked up again if the one we had is gone.
+
+        VS Code keeps it in a folder named after the extension's version and
+        deletes that folder after an update. A bridge left running across one
+        would otherwise try the old path for every message until restarted.
+        """
+        cli = self._cli
+        if self.config.claude_cli_pinned and cli is not None:
+            return cli                  # CLAUDE_CLI in .env: yours, never swapped
+        if cli is not None and cli.exists():
+            return cli
+        found = find_claude_cli()
+        if found is None:
             raise RuntimeError(
                 "Could not find claude.exe. Set CLAUDE_CLI in .env to its full path."
             )
+        if cli is not None:
+            log.info("%s is gone, probably updated by VS Code; now using %s",
+                     cli, found)
+        self._cli = found
+        return found
+
+    def _command(self, session_id: str | None, prompt: str) -> tuple[list[str], str]:
+        cli = self._claude_cli()
         target = session_id or str(uuid.uuid4())
         args = [
             str(cli),

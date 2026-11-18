@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Replying from Telegram no longer breaks when VS Code updates the Claude Code
+  extension. The bridge found `claude.exe` once, at startup, inside the
+  extension's folder, which is named after its version and deleted after an
+  update. A bridge left running across one answered every message with
+  `could not start claude: [WinError 2]` until it was restarted. It now looks
+  `claude.exe` up again when the one it had is gone. A path you set yourself
+  with `CLAUDE_CLI` is still used as it is.
+- When two versions of the extension are installed at once, the newest is now
+  picked by version number. Comparing folder names as text would have taken
+  2.1.99 over 2.1.100.
+
 ## [0.7.1] - 2026-11-03
 
 A topic now reads like the chat in VS Code: nothing Claude wrote between steps
