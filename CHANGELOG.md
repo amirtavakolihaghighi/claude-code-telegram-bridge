@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-18
+
+Replying from Telegram keeps working when VS Code updates the Claude Code
+extension, without restarting the bridge.
+
 ### Fixed
 
 - Replying from Telegram no longer breaks when VS Code updates the Claude Code
@@ -388,7 +393,8 @@ does rather than what changed.
 - Subagent output and Claude's thinking are not mirrored.
 - Tool input is truncated at 600 characters, output at 900.
 
-[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.6.0...v0.7.1
 [0.6.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/amirtavakolihaghighi/claude-code-telegram-bridge/compare/v0.4.1...v0.5.0
